@@ -43,3 +43,26 @@ the example hostname, terminate HTTPS at the reverse proxy, and forward only
 to the private `web` service. The example is not a production deployment and
 must be combined with firewall rules, secret management, logging, and database
 backup/restore procedures.
+
+## Phase 4.2 storage policy
+
+Migration `010_phase42_storage_policy.sql` adds a retention-policy catalog and
+storage-audit snapshots. Applying it does not remove data. The default policy
+keeps fixtures/results, verified odds, frozen predictions, settlements, and
+research artifacts permanently. Raw provider bodies and unverified live odds
+are marked archiveable only after a lossless provenance-preserving archive is
+approved. Operational cleanup is exposed as a dry-run candidate report only.
+
+Do not run `docker system prune`, `docker volume prune`, `VACUUM FULL`, or a
+database cleanup job as part of routine deployment. Review the Phase 4.2 audit,
+take a logical backup, and obtain explicit approval before any destructive
+action. PostgreSQL autovacuum settings for append-heavy evidence tables are
+set by migration 010; routine maintenance should use ordinary `VACUUM
+(ANALYZE)` only when the measured bloat and maintenance windows justify it.
+
+For the planned 8 GB VPS, keep PostgreSQL, the API, the web process, and live
+workers within explicit memory budgets. Run LightGBM training as a bounded,
+one-thread batch job outside the live worker budget (or on a separate host),
+and never start training automatically from the dashboard. Keep PostgreSQL
+and Docker data on the persistent volume and alert below 25% free disk, with
+an emergency threshold below 15%.

@@ -43,3 +43,32 @@ verify-phase4.ps1 reruns Phase 3.6 verification, authenticated API security
 and unit checks, Compose validation, and frontend tests/typecheck/build when
 the web package lockfile and installed dependencies are present. It does not
 contact Bet9ja or start workers.
+
+## Phase 4.2 storage operations
+
+`phase42-storage-audit.ps1` runs the read-only PostgreSQL catalog audit. It
+reports database size, relation/table/index/TOAST usage, logical raw-payload
+bytes, WAL, row counts, PostgreSQL settings, and optionally Docker inventory:
+
+```powershell
+./scripts/phase42-storage-audit.ps1 -DatabaseUrl $env:DATABASE_URL -IncludeDocker
+```
+
+`phase42-retention-dry-run.ps1` reads migration `010_phase42_storage_policy.sql`
+and reports candidates. It never deletes or archives rows:
+
+```powershell
+./scripts/phase42-retention-dry-run.ps1 -DatabaseUrl $env:DATABASE_URL
+```
+
+The Linux equivalent is `scripts/phase42-storage-check.sh`; set
+`DATABASE_URL` through the service environment or a protected secret file.
+The check exits nonzero before the critical free-space threshold and prints
+Docker disk usage when Docker is available. The checks are suitable for a
+cron/systemd timer; they do not poll Bet9ja.
+
+Logical database recovery uses `postgres-logical-backup.sh` and the guarded
+`postgres-logical-restore.sh`. Backups use PostgreSQL custom format and are
+validated with `pg_restore --list`. Restore requires the explicit
+`CONFIRM_RESTORE=YES` environment variable and should target a verified
+recovery database.

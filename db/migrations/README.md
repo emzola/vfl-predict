@@ -40,3 +40,10 @@ explicit, gated operator action.
 single-use magic-link tokens, hashed server-side sessions, CSRF token hashes,
 login rate-limit counters, authentication audit events, and dashboard display
 preferences. It does not create public registration or password records.
+
+`010_phase42_storage_policy.sql` adds the retention-policy catalog and
+storage-audit snapshot table. It also sets measured, conservative autovacuum
+scale factors on append-heavy evidence tables. It does not delete, archive,
+rewrite, partition, or compress existing rows. Use the Phase 4.2 retention
+dry-run command before proposing any cleanup, and keep a logical backup before
+any separately approved destructive operation.
