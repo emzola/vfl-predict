@@ -60,6 +60,12 @@ and `scripts/rollback-production.sh` for an explicitly authorized image-only
 rollback. Neither script runs `docker compose down -v` or reverses database
 migrations.
 
+`RELEASE_SHA` and `GHCR_IMAGE_PREFIX` are intentionally not stored in
+`.env.production`. The GitHub Actions deployment passes the exact commit SHA
+and derives the GHCR prefix from `github.repository` before invoking
+`scripts/deploy-production.sh`. This prevents the VPS environment file from
+selecting a stale or manually guessed image release or repository path.
+
 The production migration service runs `cmd/migrate` once under the PostgreSQL
 advisory lock. API and worker containers set `RUN_MIGRATIONS=false`; local
 commands preserve their existing migration-on-start default. See

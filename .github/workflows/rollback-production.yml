@@ -48,7 +48,9 @@ jobs:
         shell: bash
         env:
           TARGET_SHA: ${{ inputs.target_sha }}
+          REPOSITORY: ${{ github.repository }}
         run: |
           target="$PRODUCTION_SSH_USER@$PRODUCTION_HOST"
+          ghcr_prefix="ghcr.io/${REPOSITORY,,}"
           ssh -i "$HOME/.ssh/id_ed25519" -o BatchMode=yes -o StrictHostKeyChecking=yes "$target" \
-            "TARGET_SHA='$TARGET_SHA' CONFIRM_ROLLBACK=YES APP_DIR='$PRODUCTION_APP_DIR' bash '$PRODUCTION_APP_DIR/releases/$TARGET_SHA/rollback-production.sh'"
+            "TARGET_SHA='$TARGET_SHA' GHCR_IMAGE_PREFIX='$ghcr_prefix' CONFIRM_ROLLBACK=YES APP_DIR='$PRODUCTION_APP_DIR' bash '$PRODUCTION_APP_DIR/releases/$TARGET_SHA/rollback-production.sh'"

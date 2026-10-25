@@ -46,14 +46,16 @@ No value below is invented or stored in the repository.
 | GitHub variable | `PRODUCTION_APP_DIR` — defaults to `/opt/bet9ja-vfl` |
 | GitHub variable | `PRODUCTION_DEPLOY_SERVICES` — optional affected-service list |
 | VPS environment | `AUTHORIZED_EMAIL`, `RESEND_API_KEY`, `EMAIL_FROM`, database password, internal API token |
-| VPS environment | `GHCR_IMAGE_PREFIX=ghcr.io/<actual-owner>/<actual-repository>` |
+| Workflow-derived | `RELEASE_SHA` and `GHCR_IMAGE_PREFIX` are supplied automatically from the triggering commit and `github.repository` |
 | VPS environment | documented Bet9ja endpoint URLs and provider configuration |
 | Cloudflare | the actual Contabo public IPv4 for the `app` A record |
 
 The GitHub workflow derives the actual repository owner/name from
-`github.repository`; it does not hardcode one. GHCR pull authentication must be
-configured on the VPS with a least-privilege read-only credential. The
-deployment workflow never prints or transmits that credential.
+`github.repository`; it does not hardcode one. It passes the resulting
+`GHCR_IMAGE_PREFIX` to the host deployer, so it is not a value that needs to be
+copied into `.env.production`. GHCR pull authentication must be configured on
+the VPS with a least-privilege read-only credential. The deployment workflow
+never prints or transmits that credential.
 
 ## First deployment procedure
 
@@ -67,7 +69,7 @@ Complete these prerequisites before pushing or merging the first release to
 4. Install the restricted SSH public key for the deployment user. Permit SSH only through the chosen firewall policy.
 5. Authenticate the deployment user to GHCR using a read-only package token. Do not put that token in Git, GitHub workflow output, or a command argument.
 6. Copy `infra/docker/.env.production.example` to `/opt/bet9ja-vfl/.env.production`, replace all `REPLACE_*` values out of band, and keep mode `0600`.
-7. Copy the reviewed Compose/Caddy bundle and deployment scripts to the host. Do not use `docker compose down -v` and do not remove `bet9ja-vfl-production-postgres-data`.
+7. The workflow uploads the reviewed Compose/Caddy bundle and deployment scripts from the release commit; do not manually replace them on the host. Never use `docker compose down -v` and do not remove `bet9ja-vfl-production-postgres-data`.
 8. Configure Cloudflare and Resend as described below.
 9. Verify that the `production` GitHub environment has no required reviewers if
    fully automatic deployment is desired.

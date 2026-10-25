@@ -34,7 +34,7 @@ if [[ -z "${GHCR_IMAGE_PREFIX:-}" ]]; then
 fi
 export GHCR_IMAGE_PREFIX
 if [[ -z "$GHCR_IMAGE_PREFIX" ]]; then
-  echo "GHCR_IMAGE_PREFIX is missing from $ENV_FILE" >&2
+  echo "GHCR_IMAGE_PREFIX is missing; it must be supplied by the deployment workflow or $ENV_FILE" >&2
   exit 2
 fi
 if [[ ! -f "$BUNDLE_DIR/docker-compose.production.yml" || ! -f "$BUNDLE_DIR/Caddyfile.production" ]]; then
