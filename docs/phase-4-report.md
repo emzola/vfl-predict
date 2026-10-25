@@ -4,6 +4,11 @@ Date: 2026-10-25
 Scope: private dashboard, single-user passwordless authentication, authenticated
 application API, and Docker Compose preparation
 
+> Verification note: the frontend/npm and PostgreSQL integration omissions in
+> this earlier Phase 4 report were resolved by [Phase 4.1](phase-4.1-report.md).
+> This report remains the implementation record for Phase 4; use the Phase
+> 4.1 report for current verification status.
+
 ## Executive result
 
 The Phase 4 application boundary is implemented without changing the provider

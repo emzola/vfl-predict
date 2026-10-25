@@ -72,7 +72,20 @@ func (s *Server) Handler() http.Handler {
 	root.Handle("/api/v1/operations", authenticated(http.HandlerFunc(s.operationsAPI)))
 	root.Handle("/api/v1/settings", authenticated(http.HandlerFunc(s.settingsAPI)))
 	root.HandleFunc("/api/v1/system/health", s.systemHealth)
-	return root
+	return s.securityHeaders(root)
+}
+
+func (s *Server) securityHeaders(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("X-Content-Type-Options", "nosniff")
+		w.Header().Set("X-Frame-Options", "DENY")
+		w.Header().Set("Referrer-Policy", "no-referrer")
+		w.Header().Set("Permissions-Policy", "camera=(), microphone=(), geolocation=()")
+		if s.ensureAuthConfig().CookieSecure {
+			w.Header().Set("Strict-Transport-Security", "max-age=31536000; includeSubDomains")
+		}
+		next.ServeHTTP(w, r)
+	})
 }
 
 func (s *Server) guard(next http.Handler) http.Handler {

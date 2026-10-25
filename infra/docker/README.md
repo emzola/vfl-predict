@@ -20,6 +20,24 @@ Workers remain independent commands and are not started by the frontend or
 dashboard. Run the live monitor, prediction worker, and settlement process
 separately with their existing operator safeguards.
 
+For the Phase 4.1 disposable smoke test, use an explicit Compose project and
+local-only placeholder values. The verification script also applies migrations,
+checks the web-to-API route, verifies private port exposure, and exercises API
+and web restart recovery:
+
+```powershell
+./scripts/verify-phase41.ps1 `
+  -DatabaseUrl 'postgres://vfl:local-only@127.0.0.1:55433/vfl_phase41?sslmode=disable' `
+  -NpmCaFile 'C:\secure\managed-root.pem' `
+  -RunComposeSmoke `
+  -ComposeProject 'bet9ja-vfl-phase41-smoke' `
+  -ComposeWebPort 3301 `
+  -ComposePostgresPort 55434
+```
+
+The command is intended for an isolated disposable database. It does not use
+provider credentials, send email, or deploy to a server.
+
 `Caddyfile.example` is a reference TLS reverse-proxy configuration. Replace
 the example hostname, terminate HTTPS at the reverse proxy, and forward only
 to the private `web` service. The example is not a production deployment and

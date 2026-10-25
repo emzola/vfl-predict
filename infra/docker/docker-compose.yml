@@ -25,7 +25,8 @@ services:
       context: ../..
       dockerfile: infra/docker/Dockerfile.api
     restart: unless-stopped
-    command: ["/app/ops-api", "-listen", "0.0.0.0:8090"]
+    # Dockerfile.api provides /app/ops-api as ENTRYPOINT; pass only its flags.
+    command: ["-listen", "0.0.0.0:8090"]
     environment:
       DATABASE_URL: postgres://${POSTGRES_USER:-vfl}:${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in an untracked .env file or the shell}@postgres:5432/${POSTGRES_DB:-vfl}?sslmode=disable
       INTERNAL_API_TOKEN: ${INTERNAL_API_TOKEN:?Set INTERNAL_API_TOKEN in an untracked .env file or the shell}

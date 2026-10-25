@@ -65,3 +65,30 @@ func TestLoginLinkFailsClosedWhenDatabaseUnavailable(t *testing.T) {
 		t.Fatalf("status=%d want %d when database is unavailable", response.Code, http.StatusServiceUnavailable)
 	}
 }
+
+func TestProductionAuthConfigDoesNotUseMemoryMailer(t *testing.T) {
+	t.Setenv("APP_ENV", "production")
+	t.Setenv("MAILER_MODE", "memory")
+	cfg := AuthConfigFromEnv()
+	if _, ok := cfg.Mailer.(unavailableMailer); !ok {
+		t.Fatalf("production mailer=%T, want unavailableMailer when memory mode is selected", cfg.Mailer)
+	}
+}
+
+func TestSecurityHeadersAreSet(t *testing.T) {
+	server := NewServerWithAuthConfig(nil, "", AuthConfig{CookieSecure: true})
+	request := httptest.NewRequest(http.MethodGet, "/healthz", nil)
+	response := httptest.NewRecorder()
+	server.Handler().ServeHTTP(response, request)
+	for name, want := range map[string]string{
+		"X-Content-Type-Options":    "nosniff",
+		"X-Frame-Options":           "DENY",
+		"Referrer-Policy":           "no-referrer",
+		"Permissions-Policy":        "camera=(), microphone=(), geolocation=()",
+		"Strict-Transport-Security": "max-age=31536000; includeSubDomains",
+	} {
+		if got := response.Header().Get(name); got != want {
+			t.Fatalf("header %s=%q want %q", name, got, want)
+		}
+	}
+}

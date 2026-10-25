@@ -154,3 +154,22 @@ dashboard reads PostgreSQL through the Go API and never calls Bet9ja directly.
 These findings do not resolve API-02, API-03, API-04, API-06, API-10,
 API-31, API-32, API-33, API-34, API-36, API-37, or API-38. They remain gates
 for provider-backed claims and are not changed by the dashboard implementation.
+
+## Phase 4.1 verification update (2026-10-25)
+
+Phase 4.1 validated the application boundary against a disposable PostgreSQL
+database and an isolated Docker Compose project. It did not make provider
+requests, enable production email delivery, or validate a live Bet9ja feed.
+
+| ID | Phase 4.1 finding | Remaining limitation |
+|---|---|---|
+| API-43 | The local npm environment is Node `22.12.0` / npm `10.9.2`, uses `https://registry.npmjs.org/`, and retains `strict-ssl=true`. Registry access succeeds when the environment's managed `AVG Web/Mail Shield Root` CA is supplied through an ignored local `cafile`; no TLS validation was disabled. | The CA is environment-specific and is not committed. CI/VPS operators must provide the correct corporate/system trust chain or use the normal OS/Node trust store. Never use `strict-ssl=false` or `NODE_TLS_REJECT_UNAUTHORIZED=0`. |
+| API-44 | A disposable PostgreSQL run applying migrations 001–009 passed authorized/unauthorized generic login behavior, single-use and expired links, concurrent redemption, sessions, logout/revocation, CSRF, rate limiting, audit records, protected dashboard access, and deterministic dashboard API reads. | The test uses the development memory mailer and synthetic database fixtures. A real transactional email provider payload and delivery contract remain unvalidated. |
+| API-45 | `packages/contracts/openapi.yaml` passes `@apidevtools/swagger-parser`; deterministic dashboard fixtures exercise overview, seasons/rounds, predictions, future rounds, history, match detail/odds, performance, paper testing, operations, settings, and sessions. | No browser-driven visual test or real provider-backed dashboard dataset was run in this environment. Frontend/API integration is validated at the HTTP contract and production-build boundaries. |
+| API-46 | The Compose smoke test passed migrations, private API routing, health, login redirect, loopback-only PostgreSQL exposure, no host-published operational API, and API/web restart recovery. The API command was corrected to pass flags to its existing Docker entrypoint rather than repeat the executable path. | The smoke test uses local placeholder values and the development memory mailer. HTTPS termination, real email delivery, production secrets, firewall policy, backups, and VPS deployment remain unverified. |
+| API-47 | Frontend audit after the patched Next 16.4.3/Vitest 5 dependency update reports zero critical and zero high advisories. | Three moderate dev-only Tailwind/PostCSS-parser advisories remain; their available fix is a Tailwind 4 migration and was not taken in Phase 4.1. They are not part of the standalone runtime image, but should be revisited before production deployment. |
+| API-48 | The Next production build is configured to use Webpack and constrained Windows build concurrency because the local restricted environment produced intermittent child-process/parallel-directory `EPERM` failures with Next 16 Turbopack. The same build passed outside the restricted sandbox and in the Linux Docker image. | A native Windows build in a differently managed environment should be rechecked; the production target remains the Linux container. |
+
+These findings do not resolve the provider-side assumptions listed above or
+claim production readiness. They supersede the Phase 4 report's earlier
+frontend/npm and PostgreSQL verification omissions.

@@ -81,6 +81,17 @@ func (m *MemoryMailer) Last() (MagicLinkMessage, bool) {
 	return m.messages[len(m.messages)-1], true
 }
 
+// Count is intentionally small and test-oriented; it lets development and
+// integration tests assert that a rate-limited request did not enqueue mail.
+func (m *MemoryMailer) Count() int {
+	if m == nil {
+		return 0
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return len(m.messages)
+}
+
 type webhookMailer struct {
 	url   string
 	token string
@@ -169,9 +180,17 @@ func AuthConfigFromEnv() AuthConfig {
 	cfg.CookieSecure = strings.EqualFold(strings.TrimSpace(os.Getenv("COOKIE_SECURE")), "true") ||
 		strings.EqualFold(strings.TrimSpace(os.Getenv("APP_ENV")), "production")
 
+	appEnv := strings.ToLower(strings.TrimSpace(os.Getenv("APP_ENV")))
 	switch strings.ToLower(strings.TrimSpace(os.Getenv("MAILER_MODE"))) {
 	case "", "memory":
-		cfg.Mailer = &MemoryMailer{}
+		if appEnv == "production" {
+			// The in-memory mailer is intentionally unavailable in production;
+			// enabling it would make the login flow appear healthy without any
+			// deliverable sign-in channel.
+			cfg.Mailer = unavailableMailer{}
+		} else {
+			cfg.Mailer = &MemoryMailer{}
+		}
 	case "webhook":
 		cfg.Mailer = webhookMailer{
 			url:   strings.TrimSpace(os.Getenv("EMAIL_PROVIDER_URL")),

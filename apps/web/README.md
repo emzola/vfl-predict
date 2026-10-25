@@ -6,8 +6,28 @@ connects to PostgreSQL or the Bet9ja provider directly.
 
 ## Local development
 
-Run npm install, set API_BASE_URL to the private Go API address, and run npm
-run dev.
+Use the committed lockfile for reproducible installation:
+
+```powershell
+npm ci --no-audit --no-fund
+npm test
+npm run typecheck
+npm run openapi:validate
+npm run build
+```
+
+If the workstation or CI environment uses an inspected/corporate registry
+certificate, provide its trusted CA explicitly with npm's `cafile` option:
+
+```powershell
+npm config get strict-ssl   # must remain true
+npm ci --no-audit --no-fund --cafile C:\secure\managed-root.pem
+```
+
+Never disable TLS verification. The CA file must remain outside the repository.
+
+For development, set `API_BASE_URL` to the private Go API address and run
+`npm run dev`.
 
 The Go API must be running separately. Configure AUTHORIZED_EMAIL,
 APP_BASE_URL, and the mailer in the API environment. Development defaults to
