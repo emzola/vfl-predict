@@ -164,11 +164,12 @@ services:
     image: ${GHCR_IMAGE_PREFIX:?Set GHCR_IMAGE_PREFIX, for example ghcr.io/owner/repository}/vfl-worker:${RELEASE_SHA:?Set RELEASE_SHA to an immutable Git commit SHA}
     restart: unless-stopped
     entrypoint: ["/app/prediction-worker"]
-    command: ["-interval", "60s"]
+    command: ["-interval", "60s", "-auto-freeze"]
     environment:
       DATABASE_URL: postgres://${POSTGRES_USER:-vfl}:${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in the VPS environment file}@postgres:5432/${POSTGRES_DB:-vfl}?sslmode=disable
       RUN_MIGRATIONS: "false"
       PREDICTION_SAFETY_BUFFER_SECONDS: ${PREDICTION_SAFETY_BUFFER_SECONDS:-30}
+      PREDICTION_FREEZE_LEAD_SECONDS: ${PREDICTION_FREEZE_LEAD_SECONDS:-90}
     depends_on:
       migrate:
         condition: service_completed_successfully

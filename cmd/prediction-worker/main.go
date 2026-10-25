@@ -8,6 +8,8 @@ import (
 	"fmt"
 	"os"
 	"os/signal"
+	"strconv"
+	"strings"
 	"syscall"
 	"time"
 
@@ -22,14 +24,24 @@ func main() {
 	round := 0
 	modelName := "bookmaker_first"
 	freeze := false
+	autoFreeze := false
 	runOnce := false
 	interval := 60 * time.Second
+	safetyBuffer, err := durationFromEnvSeconds("PREDICTION_SAFETY_BUFFER_SECONDS", prediction.DefaultConfig().SafetyBuffer)
+	if err != nil {
+		fatal(err.Error())
+	}
+	freezeLead, err := durationFromEnvSeconds("PREDICTION_FREEZE_LEAD_SECONDS", 90*time.Second)
+	if err != nil {
+		fatal(err.Error())
+	}
 	flag.StringVar(&databaseURL, "database-url", databaseURL, "PostgreSQL connection URL")
 	flag.StringVar(&migrationsDir, "migrations-dir", migrationsDir, "directory containing SQL migrations")
 	flag.StringVar(&seasonID, "season-id", seasonID, "season to predict; required for run-once")
 	flag.IntVar(&round, "round", round, "round to predict; required for run-once")
 	flag.StringVar(&modelName, "model", modelName, "prediction policy/model name (default: bookmaker_first)")
 	flag.BoolVar(&freeze, "freeze", freeze, "create an official frozen round prediction")
+	flag.BoolVar(&autoFreeze, "auto-freeze", autoFreeze, "freeze the selected upcoming round during the configured pre-kickoff window")
 	flag.BoolVar(&runOnce, "run-once", runOnce, "generate one round and exit")
 	flag.DurationVar(&interval, "interval", interval, "background safety-scan interval")
 	flag.Parse()
@@ -50,6 +62,7 @@ func main() {
 	engine := prediction.NewEngine(db)
 	config := prediction.DefaultConfig()
 	config.ModelName = modelName
+	config.SafetyBuffer = safetyBuffer
 	ownerID := fmt.Sprintf("prediction-worker-%d", os.Getpid())
 	generate := func() {
 		token, acquired, leaseErr := repo.AcquireLease(ctx, "prediction-worker", ownerID, 4*time.Minute)
@@ -57,20 +70,21 @@ func main() {
 			return
 		}
 		defer func() { _ = repo.ReleaseLease(context.Background(), "prediction-worker", ownerID, token) }()
-		targetSeason, targetRound := seasonID, round
-		if targetSeason == "" || targetRound <= 0 {
+		target := roundTarget{SeasonID: seasonID, Round: round}
+		if target.SeasonID == "" || target.Round <= 0 {
 			var nextErr error
-			targetSeason, targetRound, nextErr = nextRound(ctx, db)
-			if nextErr != nil || targetSeason == "" || targetRound <= 0 {
+			target, nextErr = nextRound(ctx, db)
+			if nextErr != nil || target.SeasonID == "" || target.Round <= 0 {
 				return
 			}
 		}
+		freezeRun := shouldFreeze(target, time.Now().UTC(), config, freeze, autoFreeze, freezeLead)
 		executionID, executionErr := repo.StartJobExecution(ctx, "prediction-worker", "prediction-worker", 1,
-			fmt.Sprintf(`{"season_id":%q,"round":%d,"freeze":%t}`, targetSeason, targetRound, freeze))
+			fmt.Sprintf(`{"season_id":%q,"round":%d,"freeze":%t}`, target.SeasonID, target.Round, freezeRun))
 		if executionErr != nil {
 			return
 		}
-		report, generationErr := engine.GenerateRound(ctx, targetSeason, targetRound, config, freeze)
+		report, generationErr := engine.GenerateRound(ctx, target.SeasonID, target.Round, config, freezeRun)
 		if generationErr != nil {
 			retryable := true
 			_ = repo.FinishJobExecution(ctx, executionID, "failed", "prediction_generation_failed", generationErr.Error(), &retryable, 0, 0, `{}`)
@@ -127,17 +141,55 @@ func main() {
 	}
 }
 
-func nextRound(ctx context.Context, db *sql.DB) (string, int, error) {
-	var season string
-	var round int
+type roundTarget struct {
+	SeasonID          string
+	Round             int
+	EarliestKickoffAt time.Time
+}
+
+func nextRound(ctx context.Context, db *sql.DB) (roundTarget, error) {
+	var target roundTarget
 	row := db.QueryRowContext(ctx, `
-SELECT season_id, round_no FROM round_states
-WHERE state NOT IN ('settled') AND earliest_kickoff_at >= now()
-ORDER BY earliest_kickoff_at LIMIT 1`)
-	if err := row.Scan(&season, &round); err != nil {
-		return "", 0, err
+SELECT rs.season_id, rs.round_no, rs.earliest_kickoff_at
+FROM round_states rs
+WHERE rs.state NOT IN ('settled', 'missed_cutoff')
+  AND rs.earliest_kickoff_at >= now()
+  AND NOT EXISTS (
+      SELECT 1
+      FROM prediction_runs official
+      WHERE official.season_id = rs.season_id
+        AND official.round_no = rs.round_no
+        AND official.status IN ('frozen', 'settled')
+        AND official.generated_fixture_count = 8
+  )
+ORDER BY rs.earliest_kickoff_at LIMIT 1`)
+	if err := row.Scan(&target.SeasonID, &target.Round, &target.EarliestKickoffAt); err != nil {
+		return roundTarget{}, err
 	}
-	return season, round, nil
+	return target, nil
+}
+
+func shouldFreeze(target roundTarget, now time.Time, config prediction.Config, force, auto bool, lead time.Duration) bool {
+	if force {
+		return true
+	}
+	if !auto || target.EarliestKickoffAt.IsZero() {
+		return false
+	}
+	cutoff := target.EarliestKickoffAt.Add(-config.SafetyBuffer)
+	return !now.Before(cutoff.Add(-lead))
+}
+
+func durationFromEnvSeconds(name string, fallback time.Duration) (time.Duration, error) {
+	raw := strings.TrimSpace(os.Getenv(name))
+	if raw == "" {
+		return fallback, nil
+	}
+	seconds, err := strconv.Atoi(raw)
+	if err != nil || seconds <= 0 {
+		return 0, fmt.Errorf("%s must be a positive integer number of seconds", name)
+	}
+	return time.Duration(seconds) * time.Second, nil
 }
 
 func fatal(message string) {

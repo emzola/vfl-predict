@@ -333,7 +333,7 @@ func (s *Server) predictionsAPI(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "invalid prediction id")
 		return
 	}
-	page, err := s.loadPredictionPage(r, seasonID, round, status, runID, 512)
+	page, err := s.loadPredictionPage(r, seasonID, round, status, runID, 512, false)
 	if err != nil {
 		writeServerError(w, "could not load predictions")
 		return
@@ -351,7 +351,7 @@ func (s *Server) predictionRouter(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "invalid prediction id")
 		return
 	}
-	page, err := s.loadPredictionPage(r, "", 0, "", runID, 512)
+	page, err := s.loadPredictionPage(r, "", 0, "", runID, 512, false)
 	if err != nil {
 		writeServerError(w, "could not load prediction")
 		return
@@ -373,7 +373,7 @@ func (s *Server) futureRoundsAPI(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "invalid season id")
 		return
 	}
-	page, err := s.loadPredictionPage(r, seasonID, 0, "provisional", "", 256)
+	page, err := s.loadPredictionPage(r, seasonID, 0, "provisional", "", 256, true)
 	if err != nil {
 		writeServerError(w, "could not load future rounds")
 		return
@@ -772,8 +772,12 @@ func scanFixture(row scanner) (fixtureView, error) {
 	return item, nil
 }
 
-func (s *Server) loadPredictionPage(r *http.Request, seasonID string, round int, status, runID string, limit int) (predictionPage, error) {
-	query := "SELECT DISTINCT ON (p.season_id, p.round_no, pr.match_id) p.prediction_run_id::text, pr.prediction_revision_id::text, p.season_id, p.round_no, p.model_version, p.status, p.prediction_as_of, p.input_cutoff_at, p.earliest_kickoff_at, p.expected_fixture_count, p.generated_fixture_count, pr.match_id, f.scheduled_at, f.home_team_uid, ht.name, f.away_team_uid, at.name, f.status, f.result_home, f.result_away, pr.home_probability, pr.draw_probability, pr.away_probability, pr.probability_payload, pr.odds_observed_at, pr.provider_odds_timestamp_at, pr.point_in_time_verified, pr.eligible, COALESCE(pr.ineligible_reason, ''), pr.created_at, settlement.actual_outcome, settlement.correct, settlement.settlement_track FROM prediction_runs p JOIN prediction_revisions pr ON pr.prediction_run_id = p.prediction_run_id JOIN fixtures f ON f.match_id = pr.match_id JOIN teams ht ON ht.team_uid = f.home_team_uid JOIN teams at ON at.team_uid = f.away_team_uid LEFT JOIN LATERAL (SELECT actual_outcome, correct, settlement_track FROM prediction_settlements ps WHERE ps.prediction_revision_id = pr.prediction_revision_id ORDER BY correction_version DESC LIMIT 1) settlement ON TRUE WHERE ($1 = '' OR p.season_id = $1) AND ($2 = 0 OR p.round_no = $2) AND ($3 = '' OR p.status = $3) AND ($4 = '' OR p.prediction_run_id::text = $4) ORDER BY p.season_id, p.round_no, pr.match_id, CASE p.status WHEN 'settled' THEN 0 WHEN 'frozen' THEN 1 WHEN 'provisional' THEN 2 ELSE 3 END, p.prediction_as_of DESC, pr.revision_no DESC LIMIT $5"
+func (s *Server) loadPredictionPage(r *http.Request, seasonID string, round int, status, runID string, limit int, futureOnly bool) (predictionPage, error) {
+	futureFilter := ""
+	if futureOnly {
+		futureFilter = " AND p.earliest_kickoff_at >= now() AND NOT EXISTS (SELECT 1 FROM prediction_runs official WHERE official.season_id = p.season_id AND official.round_no = p.round_no AND official.status IN ('frozen', 'settled') AND official.generated_fixture_count = 8)"
+	}
+	query := "SELECT DISTINCT ON (p.season_id, p.round_no, pr.match_id) p.prediction_run_id::text, pr.prediction_revision_id::text, p.season_id, p.round_no, p.model_version, p.status, p.prediction_as_of, p.input_cutoff_at, p.earliest_kickoff_at, p.expected_fixture_count, p.generated_fixture_count, pr.match_id, f.scheduled_at, f.home_team_uid, ht.name, f.away_team_uid, at.name, f.status, f.result_home, f.result_away, pr.home_probability, pr.draw_probability, pr.away_probability, pr.probability_payload, pr.odds_observed_at, pr.provider_odds_timestamp_at, pr.point_in_time_verified, pr.eligible, COALESCE(pr.ineligible_reason, ''), pr.created_at, settlement.actual_outcome, settlement.correct, settlement.settlement_track FROM prediction_runs p JOIN prediction_revisions pr ON pr.prediction_run_id = p.prediction_run_id JOIN fixtures f ON f.match_id = pr.match_id JOIN teams ht ON ht.team_uid = f.home_team_uid JOIN teams at ON at.team_uid = f.away_team_uid LEFT JOIN LATERAL (SELECT actual_outcome, correct, settlement_track FROM prediction_settlements ps WHERE ps.prediction_revision_id = pr.prediction_revision_id ORDER BY correction_version DESC LIMIT 1) settlement ON TRUE WHERE ($1 = '' OR p.season_id = $1) AND ($2 = 0 OR p.round_no = $2) AND ($3 = '' OR p.status = $3) AND ($4 = '' OR p.prediction_run_id::text = $4)" + futureFilter + " ORDER BY p.season_id, p.round_no, pr.match_id, CASE p.status WHEN 'settled' THEN 0 WHEN 'frozen' THEN 1 WHEN 'provisional' THEN 2 ELSE 3 END, p.prediction_as_of DESC, pr.revision_no DESC LIMIT $5"
 	rows, err := s.DB.QueryContext(r.Context(), query, seasonID, round, status, runID, limit)
 	if err != nil {
 		return predictionPage{}, err

@@ -20,6 +20,14 @@ point-in-time-verified line was observed before the prediction cutoff, and
 falls back to the fitted Go Poisson goal model when that line is unavailable.
 LightGBM remains a research/training path and is not scheduled on the VPS.
 
+The production Compose configuration runs the Go prediction worker in
+`-auto-freeze` mode. It refreshes provisional predictions for the next
+eligible round and creates a separate official frozen run inside the
+configured pre-kickoff lead window. `PREDICTION_SAFETY_BUFFER_SECONDS` remains
+the hard cutoff protection; `PREDICTION_FREEZE_LEAD_SECONDS` controls how far
+before that cutoff the worker attempts the freeze. Once a complete frozen or
+settled run exists, the worker advances to the next round.
+
 ## Files
 
 - `infra/docker/docker-compose.production.yml` is the production topology.

@@ -14,6 +14,25 @@ Phase 3 provides independent worker commands:
 All commands use PostgreSQL migrations and stop cleanly on SIGINT/SIGTERM.
 No worker places bets or exposes a public API.
 
+## Production prediction lifecycle
+
+The production Compose configuration runs `prediction-worker` with
+`-auto-freeze`. It creates provisional predictions while the next eligible
+round is outside its freeze window, then creates a separate official frozen
+run once the round is within `PREDICTION_FREEZE_LEAD_SECONDS` of the engine's
+cutoff. The engine still enforces `PREDICTION_SAFETY_BUFFER_SECONDS` and
+records a missed cutoff instead of publishing a late round.
+
+After a complete frozen or settled run exists, the worker advances to the next
+eligible round. The dashboard's Future Rounds endpoint also excludes rounds
+whose kickoff has passed and rounds that already have a complete official run,
+so old provisional revisions cannot remain visible indefinitely.
+
+For one-off or controlled operations, `-freeze` remains available and forces
+the requested run to use the official frozen status. `-auto-freeze` is intended
+for the long-running production worker and is disabled by default for the
+command-line tool.
+
 ## Phase 3.6 controlled validation
 
 Inspect the live-monitor lease before starting a worker. The inspector is
