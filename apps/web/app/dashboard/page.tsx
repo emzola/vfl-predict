@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { apiFetch, errorMessage, formatDate } from "../../src/lib/api";
 import type { Overview } from "../../src/lib/types";
 import { ErrorState, FixtureLabel, LoadingState, MetricCard, PageHeading, StatusPill } from "../../src/components/Ui";
@@ -8,16 +8,25 @@ import { ErrorState, FixtureLabel, LoadingState, MetricCard, PageHeading, Status
 export default function OverviewPage() {
   const [data, setData] = useState<Overview>();
   const [error, setError] = useState("");
+  const refreshInFlight = useRef(false);
 
-  const load = useCallback(() => {
-    apiFetch<Overview>("/api/v1/dashboard/overview").then(setData).catch((value) => setError(errorMessage(value)));
+  const load = useCallback(async () => {
+    if (refreshInFlight.current) return;
+    refreshInFlight.current = true;
+    try {
+      const value = await apiFetch<Overview>("/api/v1/dashboard/overview");
+      setData(value);
+      setError("");
+    } catch (value) {
+      setError(errorMessage(value));
+    } finally {
+      refreshInFlight.current = false;
+    }
   }, []);
 
   useEffect(() => {
-    load();
-    const timer = window.setInterval(() => {
-      if (document.visibilityState === "visible") load();
-    }, 60000);
+    void load();
+    const timer = window.setInterval(() => void load(), 30_000);
     return () => window.clearInterval(timer);
   }, [load]);
 
@@ -55,6 +64,8 @@ export default function OverviewPage() {
         <div className="panel p-6"><p className="eyebrow">Active model</p>{data.active_model ? <div className="mt-3"><p className="text-lg font-semibold text-white">{String(data.active_model.model_key || "Model")}</p><p className="mt-1 text-sm text-slate-400">Version {String(data.active_model.version || "—")} · {String(data.active_model.promotion_status || "—")}</p></div> : <p className="mt-3 text-sm text-slate-400">No active artifact is registered. The bookmaker baseline remains the fallback.</p>}</div>
         <div className="panel p-6"><p className="eyebrow">Operational status</p><p className="mt-3 text-lg font-semibold text-white">{Number(data.worker_status[0]?.failed_jobs || 0) === 0 ? "No recorded worker failures" : String(data.worker_status[0]?.failed_jobs) + " failed jobs"}</p><p className="mt-1 text-sm text-slate-400">Checked {formatDate(data.checked_at)}</p></div>
       </section>
+
+      <p className="mt-6 text-xs text-slate-600">Auto-refreshes every 30 seconds.</p>
     </>
   );
 }

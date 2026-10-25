@@ -37,6 +37,24 @@ func TestNextUpcomingRoundReturnsNilWhenNoFutureRoundExists(t *testing.T) {
 	}
 }
 
+func TestNextUpcomingRoundSkipsMissedCutoffRound(t *testing.T) {
+	now := time.Date(2026, 10, 25, 18, 0, 0, 0, time.UTC)
+	missedKickoff := now.Add(time.Hour)
+	nextKickoff := now.Add(2 * time.Hour)
+
+	selected := nextUpcomingRound([]roundView{
+		{Round: 10, State: "missed_cutoff", EarliestKickoffAt: &missedKickoff},
+		{Round: 11, State: "provisional", EarliestKickoffAt: &nextKickoff},
+	}, now)
+
+	if selected == nil {
+		t.Fatal("expected the next eligible round")
+	}
+	if selected.Round != 11 {
+		t.Fatalf("selected round=%d want 11", selected.Round)
+	}
+}
+
 func TestNextUpcomingRoundIncludesRoundStartingNow(t *testing.T) {
 	now := time.Date(2026, 10, 25, 18, 0, 0, 0, time.UTC)
 

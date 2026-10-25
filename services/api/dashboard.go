@@ -89,6 +89,7 @@ type predictionView struct {
 	CreatedAt            time.Time          `json:"created_at"`
 	Bookmaker            *bookmakerView     `json:"bookmaker,omitempty"`
 	Secondary            map[string]any     `json:"secondary,omitempty"`
+	SecondaryModel       string             `json:"secondary_model,omitempty"`
 	FeatureValues        map[string]float64 `json:"feature_values,omitempty"`
 	ActualOutcome        string             `json:"actual_outcome,omitempty"`
 	Correct              *bool              `json:"correct,omitempty"`
@@ -106,8 +107,9 @@ type predictionPayload struct {
 		Implied   probabilityView `json:"implied"`
 		Overround float64         `json:"overround"`
 	} `json:"bookmaker"`
-	Secondary     map[string]any     `json:"secondary"`
-	FeatureValues map[string]float64 `json:"feature_values"`
+	Secondary      map[string]any     `json:"secondary"`
+	SecondaryModel string             `json:"secondary_model"`
+	FeatureValues  map[string]float64 `json:"feature_values"`
 }
 
 type predictionPage struct {
@@ -230,7 +232,12 @@ func (s *Server) overviewAPI(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 		if result.CurrentRound != nil {
-			result.UpcomingFixtures, _ = s.loadFixtures(r, season.SeasonID, result.CurrentRound.Round, true)
+			fixtures, fixtureErr := s.loadFixtures(r, season.SeasonID, result.CurrentRound.Round, true)
+			if fixtureErr != nil {
+				writeServerError(w, "could not load upcoming fixtures")
+				return
+			}
+			result.UpcomingFixtures = fixtures
 		}
 	}
 	if err := s.DB.QueryRowContext(r.Context(), "SELECT count(*) FROM round_states WHERE state = 'frozen' AND (SELECT count(*) FROM prediction_runs p WHERE p.season_id = round_states.season_id AND p.round_no = round_states.round_no AND p.status = 'frozen' AND p.generated_fixture_count = 8) > 0").Scan(&result.CompleteFrozenRounds); err != nil {
@@ -666,7 +673,7 @@ func (s *Server) settingsAPI(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) loadCurrentSeason(r *http.Request) (*seasonView, error) {
-	query := "SELECT season_id, provider_season_id, COALESCE(provider_year, ''), COALESCE(abbreviation, ''), current_flag, starts_at, ends_at, last_seen_at FROM seasons WHERE season_id = COALESCE((SELECT season_id FROM live_feed_observations WHERE endpoint_family = 'live_season_fixtures' ORDER BY observed_at DESC LIMIT 1), (SELECT season_id FROM seasons WHERE current_flag ORDER BY last_seen_at DESC LIMIT 1)) LIMIT 1"
+	query := "SELECT season_id, provider_season_id, COALESCE(provider_year, ''), COALESCE(abbreviation, ''), current_flag, starts_at, ends_at, last_seen_at FROM seasons WHERE season_id = COALESCE((SELECT season_id FROM seasons WHERE current_flag = true ORDER BY last_seen_at DESC LIMIT 1), (SELECT season_id FROM live_feed_observations WHERE endpoint_family = 'live_season_fixtures' AND parse_status = 'accepted' ORDER BY observed_at DESC LIMIT 1)) LIMIT 1"
 	item, err := scanSeasonRow(s.DB.QueryRowContext(r.Context(), query))
 	if err == sql.ErrNoRows {
 		return nil, nil
@@ -722,7 +729,7 @@ func (s *Server) loadRounds(r *http.Request, seasonID string) ([]roundView, erro
 func nextUpcomingRound(rounds []roundView, now time.Time) *roundView {
 	for index := range rounds {
 		item := rounds[index]
-		if item.State == "settled" || item.EarliestKickoffAt == nil {
+		if item.State == "settled" || item.State == "missed_cutoff" || item.EarliestKickoffAt == nil {
 			continue
 		}
 		if !item.EarliestKickoffAt.Before(now) {
@@ -735,7 +742,7 @@ func nextUpcomingRound(rounds []roundView, now time.Time) *roundView {
 func (s *Server) loadFixtures(r *http.Request, seasonID string, round int, upcomingOnly bool) ([]fixtureView, error) {
 	query := "SELECT f.match_id, f.season_id, f.round_no, f.scheduled_at, f.home_team_uid, ht.name, f.away_team_uid, at.name, f.status, f.result_home, f.result_away FROM fixtures f JOIN teams ht ON ht.team_uid = f.home_team_uid JOIN teams at ON at.team_uid = f.away_team_uid WHERE f.season_id = $1 AND f.round_no = $2"
 	if upcomingOnly {
-		query += " AND f.status NOT IN ('completed', 'canceled')"
+		query += " AND f.scheduled_at >= now() AND f.status NOT IN ('completed', 'canceled')"
 	}
 	query += " ORDER BY f.scheduled_at, f.match_id LIMIT 16"
 	rows, err := s.DB.QueryContext(r.Context(), query, seasonID, round)
@@ -877,6 +884,7 @@ func applyPredictionPayload(item *predictionView, payload []byte) {
 		}
 	}
 	item.Secondary = decoded.Secondary
+	item.SecondaryModel = decoded.SecondaryModel
 	item.FeatureValues = decoded.FeatureValues
 }
 

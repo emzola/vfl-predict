@@ -17,8 +17,9 @@ func TestApplyPredictionPayloadExposesBookmakerProvenance(t *testing.T) {
 			"implied":   map[string]float64{"home": 0.5, "draw": 0.3, "away": 0.2},
 			"overround": 1.08,
 		},
-		"secondary":      map[string]any{"over_2_5": 0.51},
-		"feature_values": map[string]float64{"home_form": 0.7},
+		"secondary":       map[string]any{"over_2_5": 0.51},
+		"secondary_model": "poisson",
+		"feature_values":  map[string]float64{"home_form": 0.7},
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -35,6 +36,9 @@ func TestApplyPredictionPayloadExposesBookmakerProvenance(t *testing.T) {
 	}
 	if item.Secondary["over_2_5"] != float64(0.51) || item.FeatureValues["home_form"] != 0.7 {
 		t.Fatalf("derived payload secondary=%v features=%v", item.Secondary, item.FeatureValues)
+	}
+	if item.SecondaryModel != "poisson" {
+		t.Fatalf("secondary model=%q", item.SecondaryModel)
 	}
 }
 

@@ -153,8 +153,8 @@ func (s *Server) current(w http.ResponseWriter, r *http.Request) {
 	err := s.DB.QueryRowContext(r.Context(), `
 	SELECT season_id, starts_at, ends_at FROM seasons
 	WHERE season_id = COALESCE(
-	    (SELECT season_id FROM live_feed_observations WHERE endpoint_family = 'live_season_fixtures' ORDER BY observed_at DESC LIMIT 1),
-	    (SELECT season_id FROM seasons WHERE current_flag = true ORDER BY last_seen_at DESC LIMIT 1)
+	    (SELECT season_id FROM seasons WHERE current_flag = true ORDER BY last_seen_at DESC LIMIT 1),
+	    (SELECT season_id FROM live_feed_observations WHERE endpoint_family = 'live_season_fixtures' AND parse_status = 'accepted' ORDER BY observed_at DESC LIMIT 1)
 	)`).Scan(&result.SeasonID, &start, &end)
 	if errors.Is(err, sql.ErrNoRows) {
 		writeJSON(w, http.StatusOK, map[string]any{"season_id": nil, "round": nil})
@@ -167,7 +167,7 @@ func (s *Server) current(w http.ResponseWriter, r *http.Request) {
 	_ = s.DB.QueryRowContext(r.Context(), `
 SELECT round_no FROM round_states
 WHERE season_id = $1
-  AND state NOT IN ('settled')
+  AND state NOT IN ('settled', 'missed_cutoff')
   AND earliest_kickoff_at >= now()
 ORDER BY earliest_kickoff_at LIMIT 1`, result.SeasonID).Scan(&round)
 	if round.Valid {
@@ -192,8 +192,8 @@ SELECT f.season_id, f.round_no, f.match_id, f.scheduled_at, f.home_team_uid, ht.
        f.away_team_uid, at.name, f.status, f.result_home, f.result_away
 FROM fixtures f JOIN teams ht ON ht.team_uid = f.home_team_uid JOIN teams at ON at.team_uid = f.away_team_uid
 WHERE f.season_id = COALESCE(
-    (SELECT season_id FROM live_feed_observations WHERE endpoint_family = 'live_season_fixtures' ORDER BY observed_at DESC LIMIT 1),
-    (SELECT season_id FROM seasons WHERE current_flag = true ORDER BY last_seen_at DESC LIMIT 1)
+    (SELECT season_id FROM seasons WHERE current_flag = true ORDER BY last_seen_at DESC LIMIT 1),
+    (SELECT season_id FROM live_feed_observations WHERE endpoint_family = 'live_season_fixtures' AND parse_status = 'accepted' ORDER BY observed_at DESC LIMIT 1)
 )
   AND f.scheduled_at >= now() - interval '2 hours'
   AND f.status NOT IN ('completed', 'canceled')

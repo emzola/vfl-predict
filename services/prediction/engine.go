@@ -278,6 +278,7 @@ RETURNING prediction_run_id::text, status, generated_fixture_count`, seasonID, r
 		switch selected := model.(type) {
 		case *research.PoissonGoalModel:
 			payload["secondary"] = selected.PredictGoals(clone, 10)
+			payload["secondary_model"] = "poisson"
 		case *research.BookmakerFirstModel:
 			payload["secondary"] = selected.PoissonGoals(clone, 10)
 			payload["secondary_model"] = "poisson"

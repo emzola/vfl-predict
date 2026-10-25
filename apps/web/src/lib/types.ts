@@ -23,6 +23,18 @@ export type Bookmaker = {
   overround: number;
 };
 
+export type SecondaryGoalPrediction = {
+  probability?: Probability;
+  lambda_home?: number;
+  lambda_away?: number;
+  over_2_5?: number;
+  under_2_5?: number;
+  both_teams_to_score?: number;
+  neither_team_scores?: number;
+  correct_scores?: Record<string, number>;
+  correct_score_residual_tail?: number;
+};
+
 export type Prediction = {
   prediction_run_id: string;
   prediction_revision_id: string;
@@ -47,7 +59,8 @@ export type Prediction = {
   ineligible_reason?: string;
   created_at: string;
   bookmaker?: Bookmaker;
-  secondary?: Record<string, unknown>;
+  secondary?: SecondaryGoalPrediction;
+  secondary_model?: string;
   feature_values?: Record<string, number>;
   actual_outcome?: string;
   correct?: boolean;
