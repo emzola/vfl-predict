@@ -15,6 +15,11 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: '3.12'
+      - name: Install Python model dependencies
+        working-directory: services/model
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -e .
       - name: Go tests
         run: go test ./...
       - name: Go formatting and vet
