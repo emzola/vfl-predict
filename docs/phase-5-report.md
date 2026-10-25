@@ -22,8 +22,8 @@ training is not scheduled in production.
 ## Implemented functionality
 
 - `.github/workflows/phase5-production.yml` validates, builds, publishes SHA-tagged
-  API/worker/web images, and deploys only after the configured bootstrap and
-  high-risk gates pass. Third-party action references are pinned to immutable
+  API/worker/web images, and deploys automatically from `main` after automated
+  validation and image-build checks. Third-party action references are pinned to immutable
   revisions, deployments are serialized, and SSH uses a supplied known-hosts
   value.
 - `.github/workflows/rollback-production.yml` provides an explicitly confirmed,
@@ -113,8 +113,6 @@ GitHub production environment secrets:
 
 GitHub variables:
 
-- `PRODUCTION_DEPLOY_ENABLED=true` only after the first deployment is manually
-  approved and verified.
 - Optional `PRODUCTION_APP_DIR` and `PRODUCTION_DEPLOY_SERVICES`.
 
 The VPS-only `.env.production` must supply the actual GHCR image prefix, database
@@ -143,14 +141,14 @@ represented only by placeholders in `infra/docker/.env.production.example`.
 1. Complete the prerequisites in `docs/phase-5-deployment.md`: VPS hardening,
    restricted deployment user, firewall, GHCR read-only pull access, protected
    `.env.production`, Cloudflare record, and Resend domain verification.
-2. Run the bootstrap and first deployment manually with an approved release SHA.
+2. Run the bootstrap, then push or merge the first release to `main`.
 3. Verify Caddy certificate issuance, the real Resend magic-link flow, protected
    dashboard access, worker leases, prediction cutoffs, settlement, and a logical
    backup/isolated restore.
-4. Record those results, then set `PRODUCTION_DEPLOY_ENABLED=true` to activate
-   routine compatible deployments.
-5. Keep schema-risk releases behind explicit approval and defer worker changes
-   near an imminent prediction cutoff.
+4. Record those results. Subsequent successful pushes or merges to `main` follow
+   the same automated deployment path.
+5. Review incompatible or destructive schema changes using the normal release
+   process, and defer worker changes near an imminent prediction cutoff.
 
 Until those steps are completed, the platform is deployment-ready locally but not
 production-verified.

@@ -44,7 +44,6 @@ No value below is invented or stored in the repository.
 | GitHub secret | `PRODUCTION_SSH_PRIVATE_KEY` — dedicated key, never a personal key |
 | GitHub secret | `PRODUCTION_KNOWN_HOSTS` — verified SSH host-key line(s) |
 | GitHub variable | `PRODUCTION_APP_DIR` — defaults to `/opt/bet9ja-vfl` |
-| GitHub variable | `PRODUCTION_DEPLOY_ENABLED` — set to `true` only after bootstrap and first manual deployment |
 | GitHub variable | `PRODUCTION_DEPLOY_SERVICES` — optional affected-service list |
 | VPS environment | `AUTHORIZED_EMAIL`, `RESEND_API_KEY`, `EMAIL_FROM`, database password, internal API token |
 | VPS environment | `GHCR_IMAGE_PREFIX=ghcr.io/<actual-owner>/<actual-repository>` |
@@ -58,8 +57,9 @@ deployment workflow never prints or transmits that credential.
 
 ## First deployment procedure
 
-The first deployment is intentionally not automatic. A repository administrator
-must perform these steps after reviewing the generated release:
+The first deployment follows the same automatic path as every later deployment.
+Complete these prerequisites before pushing or merging the first release to
+`main`:
 
 1. Confirm the Contabo VPS identity, public IPv4, operating system, and SSH host key.
 2. Install Docker Engine and the Compose plugin using the vendor's current instructions.
@@ -69,14 +69,17 @@ must perform these steps after reviewing the generated release:
 6. Copy `infra/docker/.env.production.example` to `/opt/bet9ja-vfl/.env.production`, replace all `REPLACE_*` values out of band, and keep mode `0600`.
 7. Copy the reviewed Compose/Caddy bundle and deployment scripts to the host. Do not use `docker compose down -v` and do not remove `bet9ja-vfl-production-postgres-data`.
 8. Configure Cloudflare and Resend as described below.
-9. Run the workflow manually with `confirm_initial_deploy=true`. A migration-changing release also requires `confirm_high_risk=true`.
-10. Verify the Caddy certificate, magic-link delivery, dashboard access, worker leases, database health, and the first logical backup before setting the GitHub variable `PRODUCTION_DEPLOY_ENABLED=true`.
+9. Verify that the `production` GitHub environment has no required reviewers if
+   fully automatic deployment is desired.
+10. Push or merge the release to `main`.
+11. Verify the Caddy certificate, magic-link delivery, dashboard access, worker
+    leases, database health, and the first logical backup.
 
-The workflow's first-deployment gate is independent of GitHub environment
-approval support. After bootstrap, compatible pushes to `main` can deploy only
-when that variable is explicitly enabled. Any release that changes
-`db/migrations/*.sql` is classified high risk and is skipped on a normal push.
-It requires a separately authorized manual run.
+Every successful push or merge to `main` runs validation, builds and publishes
+the release images, runs the guarded migration container, and updates the
+production services. Changes to `db/migrations/*.sql` do not require separate
+approval. A migration failure stops the release before application services are
+updated.
 
 ## Cloudflare and Caddy
 
@@ -139,7 +142,9 @@ checksum catalog. API and worker services set `RUN_MIGRATIONS=false` in
 production. Development commands retain their previous default of applying
 migrations when the variable is absent.
 
-The deployer:
+The GitHub Actions `deploy` job invokes the host deployer over SSH. Therefore
+database migrations are part of the workflow deployment; no separate manual
+migration command is required. The deployer:
 
 - validates Compose interpolation;
 - pulls SHA-tagged images;
