@@ -27,7 +27,7 @@ func main() {
 	flag.StringVar(&databaseURL, "database-url", databaseURL, "PostgreSQL connection URL (prefer DATABASE_URL)")
 	flag.StringVar(&migrationsDir, "migrations-dir", migrationsDir, "directory containing SQL migrations")
 	flag.StringVar(&seasonID, "season-id", seasonID, "one completed provider season ID; empty selects the newest bounded batch")
-	flag.IntVar(&maxSeasons, "max-seasons", maxSeasons, "maximum completed seasons to process; defaults to 1 and is capped at 10")
+	flag.IntVar(&maxSeasons, "max-seasons", maxSeasons, "maximum completed seasons to process; defaults to 1 and is capped at 30")
 	flag.BoolVar(&allowNetwork, "allow-network", allowNetwork, "enable authorized read-only provider requests for this run")
 	flag.BoolVar(&dryRun, "dry-run", dryRun, "discover and select bounded seasons without importing fixtures or odds")
 	flag.StringVar(&reportPath, "report", reportPath, "optional path for a JSON coverage report")
@@ -48,7 +48,7 @@ func main() {
 	cfg.MaxSeasons = maxSeasons
 	cfg.ConnectivityEnabled = allowNetwork || cfg.ConnectivityEnabled
 	if cfg.ConnectivityEnabled && cfg.RequestSpacing < 10*time.Second {
-		fatal("network ingestion requires at least 10 seconds between upstream requests in Phase 1")
+		fatal("network ingestion requires at least 10 seconds between upstream requests")
 	}
 
 	ctx := context.Background()
@@ -62,6 +62,9 @@ func main() {
 	}
 	repo := ingest.NewRepository(db)
 	client := ingest.NewProviderClient(cfg, nil)
+	if cfg.ConnectivityEnabled {
+		ingest.AttachDatabaseRequestGate(client, repo, cfg.RequestSpacing)
+	}
 	runner := ingest.NewRunner(cfg, client, repo)
 	reports, err := runner.Run(ctx, ingest.BackfillOptions{SeasonID: seasonID, MaxSeasons: maxSeasons, DryRun: dryRun})
 	if err != nil {

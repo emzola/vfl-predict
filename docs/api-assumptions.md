@@ -42,3 +42,115 @@ The following findings came from a small authorized, read-only probe of the docu
 | API-17 | Live responses matched the supplied core envelope but also demonstrated a valid HTTP-200 provider error envelope for an unsupported path and live market status values not seen in the supplied odds sample. | Unknown-field/type drift across all endpoint families remains possible; raw payloads and validation failures are mandatory. |
 
 The exact probe observations are summarized in [phase-1-report.md](phase-1-report.md). The original unresolved questions remain open unless the table explicitly narrows them.
+
+## Phase 2 implementation findings and remaining assumptions (2026-10-25)
+
+The Phase 2 research loader was exercised against the locally persisted,
+controlled completed-season import. This is a normalization finding, not a
+claim that the provider has published a stable public contract:
+
+| ID | Finding or implementation policy | Remaining limitation |
+|---|---|---|
+| API-19 | In a persisted completed-season response, market `1` was named `1x2`; its outcome IDs were `1`, `2`, and `3`. The draw was identified by the outcome label `draw`, while the two team labels identified home/away. The research adapter therefore requires a complete three-way line and uses labels as a narrow fallback rather than assuming `X` or fixed numeric IDs. | The provider has not supplied a market catalog or a versioned outcome-ID contract. Every season/response must continue to be validated, and an incomplete or ambiguous 1X2 line is excluded from model/betting calculations. |
+| API-20 | Persisted historical odds are usable as a retrospective post-settlement odds track and retain provider timestamp, HTTP observation/fetch time, observation kind, and `point_in_time_verified=false`. | No evidence establishes that these prices were available at a historical prediction cutoff. They cannot support a timestamp-faithful trading claim. |
+| API-21 | Automatic historical ingestion skips a season only when the database has all 30 rounds, eight fixture rows per round, and eight joined odds match records per round. A completed job with quarantined invalid outcomes can be reused because raw payloads and quarantine rows remain auditable. | Coverage does not prove market settlement correctness, price completeness across every market, or original publication timing. |
+| API-22 | Phase 2 round features use the earliest scheduled kickoff in a target round minus a 30-second safety buffer and exclude all same-round results. Verified odds are eligible only when an explicit observation time is at or before the cutoff. | The provider does not expose a verified historical market-availability timestamp, so persisted historical odds normally remain absent from point-in-time feature vectors. |
+
+The Phase 2 code continues to preserve raw responses and validation failures;
+it does not infer missing provider fields, convert retrospective odds into
+verified snapshots, or enable unrestricted backfill by default.
+
+## Phase 3 implementation policy and remaining validation (2026-10-25)
+
+Phase 3 adds live collection and forward-paper plumbing. One bounded
+authorized read-only live cycle and one bounded 20-season historical batch
+were completed on 2026-10-25. These observations narrow some assumptions but
+do not establish a complete provider contract or long-term refresh series:
+
+| ID | Phase 3 policy or finding | Remaining limitation |
+|---|---|---|
+| API-23 | The live monitor selects exactly one discovery record with `current=true`; multiple or missing current records fail the cycle rather than silently guessing. Discovery rows are still persisted so season transitions remain auditable. | The provider's authoritative current-season signal and transition timing remain unverified across repeated live polls. |
+| API-24 | Odds observed by this application while a fixture is pending are stored with `fetched_at`/`last_observed_at`, `observation_kind=live_observation`, and `point_in_time_verified=true`. The provider `timestamp` remains a separate source timestamp. | This flag proves local observation before the stored cutoff, not that the provider first published the price at that instant or that a market was executable. |
+| API-25 | Live odds are normalized with the same canonical market/outcome adapter as historical odds. Price/validity/status changes are append-only in `odds_change_history`; identical cached responses do not create a new meaningful change. | Market status `-3`, inactive outcomes, corrections, and provider cache freshness semantics are still not explained by Bet9ja documentation. |
+| API-26 | A round is publishable only when exactly eight same-round fixtures are present and every prediction row is inserted transactionally. Frozen rows cannot have probabilities, cutoff, odds references, or fixture identity mutated by SQL triggers. | Provider result correction behavior and non-1X2 settlement rules remain unresolved; forward settlement is limited to final scores and research-only 1X2 arithmetic. |
+| API-27 | Operational endpoints are read-only and bound to loopback by default; non-loopback binding requires an internal token. No public authentication or dashboard surface is enabled. | Private-network deployment, reverse-proxy policy, and magic-link authentication are deferred. |
+| API-28 | Historical backfill remains explicitly bounded at 30 seasons per invocation, defaults to one, reuses complete coverage, and keeps the shared ten-second minimum request spacing. An operator-authorized 20-season batch completed with 4,800 fixtures, 600 odds-round requests, 0 fixture/odds join failures, and 652 quarantined invalid outcomes; all selected seasons had 30 rounds of eight joined matches. | The batch used the importer’s in-process ten-second budget because it began before the persistent cross-process gate was added. Provider quota behavior and the full historical catalog remain unverified. |
+| API-29 | In the controlled Phase 3 read-only cycle, the live feed identified current season `3149484`, while the historical season-list feed used by backfill identified `3149454` as current and selected it as an eligible completed candidate. The monitor preserves the live signal and does not substitute one ID for the other. | It is not yet known whether the two feed bases are intentionally on different clocks/deployments, or how operators should reconcile them for season transitions. A repeated cross-feed observation series is required. |
+| API-30 | The bounded live cycle returned 23 market IDs, market `1` as the observed 1X2 line, 35 distinct specifier strings, market statuses from `-3` to `1`, active flags from `0` to `1`, provider results from `-1` to `1`, valid decimal odds from `1.00` to `100.00`, and one invalid `0.00` odds row. The database retained 3,348 normalized live odds rows, including 1,116 locally observed before kickoff and 2,232 post-kickoff or otherwise ineligible observations. | These values are observed payload characteristics, not provider semantics. The meaning of status `-3`, inactive outcomes, result values, corrections, and exact market availability remains undocumented. |
+
+No Phase 3 implementation finding should be read as proof that retrospective
+historical odds were available at an earlier decision cutoff. The forward track
+uses only locally observed, cutoff-eligible snapshots; the historical research
+track remains explicitly retrospective.
+
+## Phase 3.5 research and live-validation update (2026-10-25)
+
+Phase 3.5 used the existing 23 complete-season local dataset and did not
+silently expand the provider import. The LightGBM comparison therefore adds no
+new provider-contract evidence. Historical bookmaker rows were included only
+through the explicit `retrospective_unverified_availability_explicit_opt_in`
+export policy; they are not treated as contemporaneously available odds.
+
+One additional `live-monitor -run-once` attempt was prepared with the required
+10-second spacing and zero automatic retries. It did not make a new provider
+request because the persistent `live-monitor` scheduler lease was held by
+another owner. The worker was not force-stopped and the lease was not manually
+released. The actual live observations summarized under API-29/API-30 remain
+the bounded Phase 3 evidence, not a sustained Phase 3.5 refresh series.
+
+The following remain unresolved and are explicit gates for any live model
+promotion or executable paper-trading claim:
+
+| ID | Phase 3.5 status | Required evidence |
+|---|---|---|
+| API-31 | A single live cycle cannot establish a refresh distribution, stable cache behavior, or provider quota headroom. | Collect a timestamped multi-cycle series through at least one upcoming round while preserving the shared request budget and `Retry-After` behavior. |
+| API-32 | The live feed current season and historical feed current season still differ (`3149484` versus `3149454` in the prior bounded observation). Neither source is assumed authoritative. | Reconcile both feeds across repeated observations and a season transition, including fixture windows and metadata, before automatic transition handling. |
+| API-33 | Market `1` was the observed 1X2 line in the bounded live cycle; statuses, `active`, and `result` values remain provider semantics rather than confirmed settlement rules. | Obtain provider market/status documentation and capture suspended, settled, void, and corrected examples before enabling additional markets. |
+| API-34 | The current registry contains only `candidate` LightGBM artifacts; no live prediction was promoted or used to claim forward performance. | Establish genuinely pre-cutoff frozen predictions and settle them after final results, with locally observed odds provenance, across a sustained live sample. |
+
+The runnable procedure is `scripts/validate-phase35-live.ps1`; it is offline
+unless invoked with `-AllowNetwork`, requires a database URL, enforces the
+10-second minimum spacing, and refuses to bypass a held worker lease.
+
+## Phase 3.6 sustained-validation update (2026-10-25)
+
+Phase 3.6 added a read-only lease inspector and an atomic expired-only reclaim
+operation. The previous `live-monitor` lease was inspected before mutation:
+owner `live-monitor-13772` had a database expiry at 10:05 local time while the
+database clock was 10:36 and no corresponding worker process was present. It
+was therefore classified as an orphaned expired lease and reclaimed only with
+the `lease_until <= now()` database predicate. A later bounded attempt started
+another monitor cycle, persisted a season-discovery observation, and then left
+an unexpired lease/job row when the execution environment interrupted the
+cycle. That lease was not bypassed. This is operational evidence that TTL
+recovery is necessary; it is not evidence that a worker is still running.
+
+| ID | Phase 3.6 finding | Remaining limitation |
+|---|---|---|
+| API-35 | The existing four-minute lease is owner/token scoped. Two workers cannot acquire the same unexpired key in the integration test; valid leases are not reclaimable, and expired leases can be reclaimed atomically. | A process terminated outside graceful shutdown can leave a `running` job record until operator recovery/TTL handling reconciles it. Sustained supervisor behavior remains to be validated. |
+| API-36 | A bounded follow-up made a discovery request at 07:36:50Z, and a subsequent complete read-only cycle at 07:42:53Z–07:43:24Z fetched discovery, 240 fixtures, and odds for rounds 5 and 6 under the shared request budget. No provider HTTP errors were recorded. | This is still only a short observation window; it does not establish a refresh distribution, quota headroom across three seasons, or a sustained transition series. |
+| API-37 | The live feed now identifies `3149569` as current, with `3149540` and `3149484` immediately preceding it in the same discovery response. The historical season-list evidence still reports `3149454` as current, so the cross-feed discrepancy is now `3149569` versus `3149454`. | Neither feed is assumed authoritative. Automatic season transition policy still requires repeated reconciliation across a transition and metadata/fixture windows. |
+| API-38 | The current local operational database contains two provider-backed complete frozen rounds (`3149484`/14 and `3149569`/6), each with eight revisions frozen before kickoff and no provider-backed settlements. A separate late round-6 invocation completed at 07:44:50Z, six seconds after its 07:44:44Z cutoff, and correctly recorded `missed_cutoff` with zero revisions; it did not mutate the earlier immutable frozen run. | The other recorded forward settlements are synthetic integration evidence with no eligible odds; they are excluded from genuine forward claims. No three-season sustained observation was possible in this execution window. |
+| API-38 | The Phase 3.6 report filters provider live observations from `phase3-test` rows and keeps provider response counts, cache reuse, odds observation provenance, job status, and round evidence separate. | A persisted response/observation count is not a wire-level request count when retries or cache reuse occur; provider quota/error behavior remains incompletely measured. |
+
+The safe operator procedure is `services/worker/README.md` plus
+`scripts/verify-phase36.ps1`. The script is offline by default. It does not
+reclaim a lease unless `-ReclaimExpiredLease` is explicitly supplied, and it
+does not make provider requests unless `-RunLiveCycle` is explicitly supplied.
+
+## Phase 4 application-boundary update (2026-10-25)
+
+Phase 4 adds an authenticated application boundary around persisted records;
+it does not alter the provider contract or claim new provider connectivity. The
+dashboard reads PostgreSQL through the Go API and never calls Bet9ja directly.
+
+| ID | Phase 4 finding | Remaining limitation |
+|---|---|---|
+| API-39 | The application preserves the existing distinction between provider response timestamps, local observation timestamps, retrospective returned-after-settlement odds, and genuinely observed forward odds. | A dashboard timestamp is not evidence that a historical price was available at a past cutoff. Only locally captured pre-cutoff observations enter the forward paper-testing track. |
+| API-40 | Authenticated routes, session storage, CSRF checks, and dashboard response shapes are implemented in the Go application boundary; operational routes remain internal-token/loopback protected. | No production email provider contract was supplied or validated. The configurable webhook mailer payload must be tested against the selected provider before enabling delivery. |
+| API-41 | The Next.js frontend uses a same-origin API rewrite and performs no direct database or provider access; browser refreshes are bounded client reads. | Frontend dependency installation/build was not executable in this environment because npm could not validate the registry certificate and no lockfile was generated. The Docker build remains gated on obtaining a verified `package-lock.json`. |
+| API-42 | Health and dashboard endpoints report stored freshness/provenance rather than fabricating missing predictions or forward performance. | Empty local databases, missing active models, missing odds provenance, and unresolved provider season/market semantics remain visible limitations rather than inferred values. |
+
+These findings do not resolve API-02, API-03, API-04, API-06, API-10,
+API-31, API-32, API-33, API-34, API-36, API-37, or API-38. They remain gates
+for provider-backed claims and are not changed by the dashboard implementation.

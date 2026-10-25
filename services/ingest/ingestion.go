@@ -45,6 +45,7 @@ type BackfillReport struct {
 	DiscoveredSeasons         int
 	CompletedSeasonsAvailable int
 	SelectedSeasonIDs         []string
+	ReusedSeasonIDs           []string
 	DeferredCompletedSeasons  int
 	Seasons                   []SeasonReport
 }
@@ -73,8 +74,8 @@ func (r *Runner) Run(ctx context.Context, options BackfillOptions) (BackfillRepo
 	if options.MaxSeasons <= 0 {
 		options.MaxSeasons = 1
 	}
-	if options.MaxSeasons > 10 {
-		return BackfillReport{}, errors.New("refusing more than 10 seasons in one bounded Phase 1 run")
+	if options.MaxSeasons > 30 {
+		return BackfillReport{}, errors.New("refusing more than 30 seasons in one bounded Phase 3 run")
 	}
 
 	discovery, rawPayloadID, err := r.discoverSeasons(ctx)
@@ -82,17 +83,18 @@ func (r *Runner) Run(ctx context.Context, options BackfillOptions) (BackfillRepo
 		return BackfillReport{}, err
 	}
 	completedAvailable := countCompletedSeasons(discovery, r.now())
+	selected, reused, err := r.selectRunSeasons(ctx, discovery, options, r.now())
+	if err != nil {
+		return BackfillReport{}, err
+	}
 	if options.DryRun {
-		selected, err := selectSeasons(discovery, options.SeasonID, options.MaxSeasons, r.now())
-		if err != nil {
-			return BackfillReport{}, err
-		}
 		_ = rawPayloadID
 		report := BackfillReport{
 			DiscoveredSeasons:         len(discovery.Seasons),
 			CompletedSeasonsAvailable: completedAvailable,
 			SelectedSeasonIDs:         make([]string, 0, len(selected)),
-			DeferredCompletedSeasons:  completedAvailable - len(selected),
+			ReusedSeasonIDs:           reused,
+			DeferredCompletedSeasons:  deferredCompletedCount(completedAvailable, len(selected), len(reused)),
 			Seasons:                   make([]SeasonReport, 0, len(selected)),
 		}
 		for _, season := range selected {
@@ -101,15 +103,12 @@ func (r *Runner) Run(ctx context.Context, options BackfillOptions) (BackfillRepo
 		}
 		return report, nil
 	}
-	selected, err := selectSeasons(discovery, options.SeasonID, options.MaxSeasons, r.now())
-	if err != nil {
-		return BackfillReport{}, err
-	}
 	report := BackfillReport{
 		DiscoveredSeasons:         len(discovery.Seasons),
 		CompletedSeasonsAvailable: completedAvailable,
 		SelectedSeasonIDs:         make([]string, 0, len(selected)),
-		DeferredCompletedSeasons:  completedAvailable - len(selected),
+		ReusedSeasonIDs:           reused,
+		DeferredCompletedSeasons:  deferredCompletedCount(completedAvailable, len(selected), len(reused)),
 		Seasons:                   make([]SeasonReport, 0, len(selected)),
 	}
 	for _, season := range selected {
@@ -121,6 +120,48 @@ func (r *Runner) Run(ctx context.Context, options BackfillOptions) (BackfillRepo
 		report.Seasons = append(report.Seasons, seasonReport)
 	}
 	return report, nil
+}
+
+func deferredCompletedCount(available, selected, reused int) int {
+	deferred := available - selected - reused
+	if deferred < 0 {
+		return 0
+	}
+	return deferred
+}
+
+// selectRunSeasons skips already complete seasons for an automatic batch. An
+// explicit -season-id remains selectable so an operator can inspect or retry
+// that season; IngestSeason still uses its idempotent job/checkpoint behavior.
+func (r *Runner) selectRunSeasons(ctx context.Context, discovery provider.SeasonDiscovery, options BackfillOptions, now time.Time) ([]provider.SeasonSummary, []string, error) {
+	if strings.TrimSpace(options.SeasonID) != "" {
+		selected, err := selectSeasons(discovery, options.SeasonID, options.MaxSeasons, now)
+		return selected, nil, err
+	}
+	completed, err := selectSeasons(discovery, "", len(discovery.Seasons), now)
+	if err != nil {
+		return nil, nil, err
+	}
+	selected := make([]provider.SeasonSummary, 0, options.MaxSeasons)
+	reused := make([]string, 0)
+	for _, season := range completed {
+		complete, coverageErr := r.Repo.SeasonCoverageComplete(ctx, season.ID.String())
+		if coverageErr != nil {
+			return nil, nil, coverageErr
+		}
+		if complete {
+			reused = append(reused, season.ID.String())
+			continue
+		}
+		selected = append(selected, season)
+		if len(selected) >= options.MaxSeasons {
+			break
+		}
+	}
+	if len(selected) == 0 && len(reused) == 0 {
+		return nil, nil, errors.New("no completed seasons available for ingestion")
+	}
+	return selected, reused, nil
 }
 
 func countCompletedSeasons(discovery provider.SeasonDiscovery, now time.Time) int {
@@ -359,7 +400,6 @@ func (r *Runner) ingestOddsRound(ctx context.Context, season provider.SeasonSumm
 	}
 	for _, issue := range snapshot.ValidationIssues {
 		result.HasErrors = true
-		result.QuarantinedRecords++
 		result.Errors = append(result.Errors, fmt.Sprintf("round %d invalid odds %s/%d/%s: %s", round, issue.MatchID, issue.MarketID, issue.OutcomeID, issue.Reason))
 		fragment, _ := json.Marshal(issue)
 		_ = r.Repo.InsertValidationError(ctx, jobID, rawPayloadID, "odds_outcome", fmt.Sprintf("%s/%d/%s", issue.MatchID, issue.MarketID, issue.OutcomeID), "invalid_decimal_odds", issue.Reason, string(fragment))
@@ -436,6 +476,7 @@ func (r *Runner) fetchAndStore(ctx context.Context, endpointFamily, requestKey, 
 		if response.LastModified == "" {
 			response.LastModified = stored.LastModified
 		}
+		response.CacheReused = true
 		cacheReused = true
 	}
 	if len(response.Body) > 0 {
@@ -468,6 +509,13 @@ func (r *Runner) fetchAndStore(ctx context.Context, endpointFamily, requestKey, 
 		return response, "", err
 	}
 	return response, "", fmt.Errorf("provider response %s returned non-JSON or empty body", response.URL)
+}
+
+// FetchAndStore exposes the same cache-aware, raw-retaining request path used
+// by historical ingestion to the live workers.  Keeping one implementation
+// prevents live polling from bypassing conditional requests or provenance.
+func (r *Runner) FetchAndStore(ctx context.Context, endpointFamily, requestKey, baseURL, relativePath string, params map[string]any) (*Response, string, error) {
+	return r.fetchAndStore(ctx, endpointFamily, requestKey, baseURL, relativePath, params)
 }
 
 const httpStatusOK = 200

@@ -1,9 +1,15 @@
 [project]
 name = "bet9ja-vfl-contracts"
 version = "0.1.0"
-description = "Phase 0 provider contract types for Bet9ja VFL"
+description = "Bet9ja VFL provider contracts and Phase 3.5 research model service"
 requires-python = ">=3.12"
-dependencies = []
+dependencies = [
+    "numpy>=2.0,<3",
+    "lightgbm>=4.5,<5",
+]
+
+[project.scripts]
+bet9ja-vfl-phase35 = "services.model.vfl_lgbm.cli:main"
 
 [tool.ruff]
 target-version = "py312"

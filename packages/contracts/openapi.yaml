@@ -1,13 +1,259 @@
 openapi: 3.1.0
 info:
   title: Bet9ja VFL internal API
-  version: 0.1.0-phase0
+  version: 0.4.0-phase4
   description: >-
-    Phase 0 contract boundary only. No endpoint in this document asserts that
-    the provider is reachable or that a prediction algorithm exists.
-    Authentication and implementation are deferred to later phases.
-  x-contract-status: observed-and-planned-not-live
+    Authenticated application endpoints backed by the existing Go API and
+    PostgreSQL records. Provider responses, retrospective odds, and genuine
+    forward observations retain separate provenance. No endpoint places bets.
+  x-contract-status: implemented-application-boundary-provider-semantics-unchanged
 paths:
+  /api/v1/auth/request-link:
+    post:
+      summary: Request a single-use sign-in link
+      operationId: requestMagicLink
+      description: Returns the same response for authorized and unauthorized addresses.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [email]
+              properties:
+                email:
+                  type: string
+                  format: email
+                redirect:
+                  type: string
+                  pattern: '^/dashboard(?:/.*)?$'
+      responses:
+        '202':
+          description: Generic response
+        '400':
+          $ref: '#/components/responses/BadRequest'
+  /api/v1/auth/verify:
+    get:
+      summary: Consume a single-use sign-in link
+      operationId: verifyMagicLink
+      parameters:
+        - name: token
+          in: query
+          required: true
+          schema:
+            type: string
+            minLength: 32
+        - name: redirect
+          in: query
+          required: false
+          schema:
+            type: string
+            pattern: '^/dashboard(?:/.*)?$'
+      responses:
+        '302':
+          description: Session created and redirected to an allowlisted dashboard path
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+  /api/v1/auth/me:
+    get:
+      summary: Read current authenticated session
+      operationId: getCurrentSession
+      security: [{ cookieSession: [] }]
+      responses:
+        '200':
+          description: Current session
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+  /api/v1/auth/sessions:
+    get:
+      summary: List current account sessions
+      operationId: listSessions
+      security: [{ cookieSession: [] }]
+      responses:
+        '200':
+          description: Active and revoked sessions for the configured account
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+  /api/v1/auth/sessions/{sessionId}/revoke:
+    post:
+      summary: Revoke one account session
+      operationId: revokeSession
+      security: [{ cookieSession: [], csrfHeader: [] }]
+      parameters:
+        - name: sessionId
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '200':
+          description: Session revocation result
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+  /api/v1/auth/logout:
+    post:
+      summary: Revoke current session
+      operationId: logout
+      security: [{ cookieSession: [], csrfHeader: [] }]
+      responses:
+        '200':
+          description: Session revoked
+        '403':
+          $ref: '#/components/responses/Forbidden'
+  /api/v1/dashboard/overview:
+    get:
+      summary: Read dashboard overview
+      operationId: getDashboardOverview
+      security: [{ cookieSession: [] }]
+      responses:
+        '200':
+          description: Current season, round, readiness, freshness, and forward summary
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+  /api/v1/dashboard/future-rounds:
+    get:
+      summary: Read grouped future provisional rounds
+      operationId: getFutureRounds
+      security: [{ cookieSession: [] }]
+      parameters:
+        - name: season_id
+          in: query
+          schema:
+            $ref: '#/components/schemas/SeasonId'
+      responses:
+        '200':
+          description: Provisional groups with completeness and provenance
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+  /api/v1/dashboard/history:
+    get:
+      summary: Search stored prediction revisions
+      operationId: searchPredictionHistory
+      security: [{ cookieSession: [] }]
+      parameters:
+        - name: season_id
+          in: query
+          schema:
+            $ref: '#/components/schemas/SeasonId'
+        - name: round
+          in: query
+          schema:
+            $ref: '#/components/schemas/Round'
+        - name: status
+          in: query
+          schema:
+            type: string
+        - name: model
+          in: query
+          schema:
+            type: string
+            maxLength: 128
+      responses:
+        '200':
+          description: Immutable prediction revision archive
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+  /api/v1/seasons:
+    get:
+      summary: List stored seasons
+      operationId: listSeasons
+      security: [{ cookieSession: [] }]
+      responses:
+        '200':
+          description: Bounded season list
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+  /api/v1/seasons/{seasonId}/rounds:
+    get:
+      summary: List stored rounds for a season
+      operationId: listSeasonRounds
+      security: [{ cookieSession: [] }]
+      parameters:
+        - $ref: '#/components/parameters/SeasonId'
+      responses:
+        '200':
+          description: Round state and coverage list
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+  /api/v1/predictions:
+    get:
+      summary: List persisted prediction revisions for a bounded selection
+      operationId: listPredictions
+      security: [{ cookieSession: [] }]
+      parameters:
+        - name: season_id
+          in: query
+          schema:
+            $ref: '#/components/schemas/SeasonId'
+        - name: round
+          in: query
+          schema:
+            $ref: '#/components/schemas/Round'
+        - name: status
+          in: query
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Prediction page with completeness and provenance
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+  /api/v1/matches/{matchId}:
+    get:
+      summary: Read a fixture, stored odds, and stored predictions
+      operationId: getMatchDetail
+      security: [{ cookieSession: [] }]
+      parameters:
+        - name: matchId
+          in: path
+          required: true
+          schema:
+            $ref: '#/components/schemas/MatchId'
+      responses:
+        '200':
+          description: Match detail with odds provenance
+        '404':
+          $ref: '#/components/responses/NotFound'
+  /api/v1/performance:
+    get:
+      summary: Read retrospective model metrics
+      operationId: getPerformance
+      security: [{ cookieSession: [] }]
+      responses:
+        '200':
+          description: Retrospective metrics kept separate from forward evidence
+  /api/v1/paper-testing:
+    get:
+      summary: Read genuine forward paper-testing metrics
+      operationId: getPaperTesting
+      security: [{ cookieSession: [] }]
+      responses:
+        '200':
+          description: Forward-observed settlement summary and metrics
+  /api/v1/operations:
+    get:
+      summary: Read worker, feed, lease, quarantine, and coverage state
+      operationId: getOperations
+      security: [{ cookieSession: [] }]
+      responses:
+        '200':
+          description: Operational diagnostics without secrets
+  /api/v1/settings:
+    get:
+      summary: Read owner preferences
+      operationId: getSettings
+      security: [{ cookieSession: [] }]
+    patch:
+      summary: Update owner display preferences
+      operationId: updateSettings
+      security: [{ cookieSession: [], csrfHeader: [] }]
   /api/v1/system/health:
     get:
       summary: Read service health
@@ -97,6 +343,18 @@ components:
       schema:
         $ref: '#/components/schemas/Round'
   responses:
+    BadRequest:
+      description: Invalid request
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+    Forbidden:
+      description: Request rejected by origin, CSRF, or internal access policy
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
     Unauthorized:
       description: Authentication required
       content:
@@ -109,6 +367,15 @@ components:
         application/json:
           schema:
             $ref: '#/components/schemas/Error'
+  securitySchemes:
+    cookieSession:
+      type: apiKey
+      in: cookie
+      name: vfl_session
+    csrfHeader:
+      type: apiKey
+      in: header
+      name: X-CSRF-Token
   schemas:
     SeasonId:
       type: string
@@ -269,5 +536,9 @@ components:
       properties:
         code:
           type: string
+          description: HTTP status code represented as text for stable client handling
         message:
           type: string
+        error:
+          type: string
+          description: Backward-compatible error message field

@@ -62,12 +62,28 @@ func ApplyMigrations(ctx context.Context, db *sql.DB, migrationsDir string) erro
 		return fmt.Errorf("no SQL migrations found in %s", migrationsDir)
 	}
 	sort.Strings(paths)
+	// Several independent workers may start at the same time. Migration 007
+	// contains a backfill insert that takes locks on large odds tables, so
+	// running the idempotent migration files concurrently can deadlock even
+	// when each individual statement is safe. Hold one PostgreSQL session lock
+	// for the entire ordered batch and execute every statement on that session.
+	conn, err := db.Conn(ctx)
+	if err != nil {
+		return fmt.Errorf("reserve migration connection: %w", err)
+	}
+	defer conn.Close()
+	if _, err := conn.ExecContext(ctx, `SELECT pg_advisory_lock(hashtextextended('bet9ja-vfl:migrations', 0))`); err != nil {
+		return fmt.Errorf("acquire migration lock: %w", err)
+	}
+	defer func() {
+		_, _ = conn.ExecContext(context.Background(), `SELECT pg_advisory_unlock(hashtextextended('bet9ja-vfl:migrations', 0))`)
+	}()
 	for _, path := range paths {
 		contents, err := os.ReadFile(path)
 		if err != nil {
 			return fmt.Errorf("read migration %s: %w", path, err)
 		}
-		if _, err := db.ExecContext(ctx, string(contents)); err != nil {
+		if _, err := conn.ExecContext(ctx, string(contents)); err != nil {
 			return fmt.Errorf("apply migration %s: %w", path, err)
 		}
 	}
@@ -199,6 +215,24 @@ ON CONFLICT (season_id) DO UPDATE SET
 	return err
 }
 
+// ReconcileCurrentSeasonFlags prevents stale discovery rows from leaving more
+// than one current season visible to operational readers. The requested and
+// returned season IDs remain separately retained in raw payload provenance.
+func (r *Repository) ReconcileCurrentSeasonFlags(ctx context.Context, seasonID string) error {
+	tx, err := r.DB.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = tx.Rollback() }()
+	if _, err := tx.ExecContext(ctx, `UPDATE seasons SET current_flag = false WHERE current_flag = true`); err != nil {
+		return err
+	}
+	if _, err := tx.ExecContext(ctx, `UPDATE seasons SET current_flag = true, last_seen_at = now() WHERE season_id = $1`, seasonID); err != nil {
+		return err
+	}
+	return tx.Commit()
+}
+
 func (r *Repository) UpsertTeam(ctx context.Context, team provider.TeamRef, rawPayloadID string, now time.Time) error {
 	_, err := r.DB.ExecContext(ctx, `
 INSERT INTO teams (
@@ -278,7 +312,26 @@ type OddsPersistResult struct {
 	JoinFailure int
 }
 
+// LiveOddsPointInTimeVerified is intentionally strict: the application's
+// observation must precede the fixture kickoff. A provider source timestamp
+// cannot make a post-kickoff response pre-match eligible.
+func LiveOddsPointInTimeVerified(fixture provider.Fixture, fetchedAt time.Time) bool {
+	return !fetchedAt.IsZero() && fetchedAt.UTC().Before(fixture.ScheduledAt.UTC())
+}
+
 func (r *Repository) UpsertOddsSnapshot(ctx context.Context, snapshot provider.OddsSnapshot, fixtures map[provider.MatchID]provider.Fixture, rawPayloadID string, fetchedAt time.Time, observationKind string, provenance string, jobID, checkpointKey string) (OddsPersistResult, error) {
+	return r.upsertOddsSnapshot(ctx, snapshot, fixtures, rawPayloadID, fetchedAt, observationKind, false, provenance, jobID, checkpointKey)
+}
+
+// UpsertLiveOddsSnapshot is the live-feed variant of UpsertOddsSnapshot.  Its
+// point_in_time_verified flag is true only because fetchedAt is an observation
+// made by this application while the fixture was pending; provider timestamps
+// alone never enable this flag.
+func (r *Repository) UpsertLiveOddsSnapshot(ctx context.Context, snapshot provider.OddsSnapshot, fixtures map[provider.MatchID]provider.Fixture, rawPayloadID string, fetchedAt time.Time, provenance string, jobID, checkpointKey string) (OddsPersistResult, error) {
+	return r.upsertOddsSnapshot(ctx, snapshot, fixtures, rawPayloadID, fetchedAt, "live_observation", true, provenance, jobID, checkpointKey)
+}
+
+func (r *Repository) upsertOddsSnapshot(ctx context.Context, snapshot provider.OddsSnapshot, fixtures map[provider.MatchID]provider.Fixture, rawPayloadID string, fetchedAt time.Time, observationKind string, pointInTimeVerified bool, provenance string, jobID, checkpointKey string) (OddsPersistResult, error) {
 	if strings.TrimSpace(provenance) == "" {
 		provenance = `{}`
 	}
@@ -315,6 +368,7 @@ func (r *Repository) UpsertOddsSnapshot(ctx context.Context, snapshot provider.O
 			}
 			continue
 		}
+		verifiedForFixture := pointInTimeVerified && LiveOddsPointInTimeVerified(fixture, fetchedAt)
 		for _, market := range record.Markets {
 			var marketDefinitionID int64
 			err = tx.QueryRowContext(ctx, `
@@ -335,14 +389,15 @@ RETURNING market_definition_id`, market.ID, market.Name).Scan(&marketDefinitionI
 				if oddsError == "" {
 					oddsError = ""
 				}
-				_, err = tx.ExecContext(ctx, `
+				var oddsSnapshotID string
+				err = tx.QueryRowContext(ctx, `
 INSERT INTO odds_snapshots (
     match_id, market_definition_id, provider_market_id, specifiers, outcome_id, outcome_name,
     outcome_abbreviation, raw_odds, decimal_odds, odds_valid, odds_error, market_status,
     outcome_active, provider_result, source_timestamp_ms, source_timestamp_at, first_observed_at,
     last_observed_at, fetched_at, observation_kind, point_in_time_verified, raw_payload_id, provenance
 ) VALUES ($1, $2, $3, $4, $5, $6, NULLIF($7, ''), $8, $9, $10, NULLIF($11, ''), $12, $13, $14,
-          $15, $16, $17, $17, $17, $18, false, $19::uuid, $20::jsonb)
+          $15, $16, $17, $17, $17, $18, $19, $20::uuid, $21::jsonb)
 ON CONFLICT (match_id, provider_market_id, specifiers, outcome_id, source_timestamp_ms, raw_odds) DO UPDATE SET
     market_definition_id = EXCLUDED.market_definition_id,
     outcome_name = EXCLUDED.outcome_name,
@@ -353,15 +408,34 @@ ON CONFLICT (match_id, provider_market_id, specifiers, outcome_id, source_timest
     market_status = EXCLUDED.market_status,
     outcome_active = EXCLUDED.outcome_active,
     provider_result = EXCLUDED.provider_result,
+    observation_kind = EXCLUDED.observation_kind,
+    first_observed_at = LEAST(odds_snapshots.first_observed_at, EXCLUDED.first_observed_at),
     last_observed_at = GREATEST(odds_snapshots.last_observed_at, EXCLUDED.last_observed_at),
-    fetched_at = EXCLUDED.fetched_at,
-    provenance = EXCLUDED.provenance`,
+    fetched_at = GREATEST(odds_snapshots.fetched_at, EXCLUDED.fetched_at),
+    point_in_time_verified = odds_snapshots.point_in_time_verified OR EXCLUDED.point_in_time_verified,
+    provenance = EXCLUDED.provenance
+RETURNING odds_snapshot_id::text`,
 					fixture.MatchID, marketDefinitionID, market.ID, market.Specifiers, outcome.ID, outcome.Name,
 					outcome.Abbreviation, outcome.RawOdds, decimalOdds, oddsValid, oddsError, market.Status,
 					outcome.Active, outcome.ProviderResult, snapshot.SourceTimestampMillis,
-					snapshot.SourceTimestampUTC, fetchedAt.UTC(), observationKind, rawPayloadID, provenance)
+					snapshot.SourceTimestampUTC, fetchedAt.UTC(), observationKind, verifiedForFixture, rawPayloadID, provenance).Scan(&oddsSnapshotID)
 				if err != nil {
 					return result, fmt.Errorf("upsert odds %s/%d/%s: %w", record.MatchID, market.ID, outcome.ID, err)
+				}
+				_, err = tx.ExecContext(ctx, `
+INSERT INTO odds_snapshot_observations (
+    odds_snapshot_id, raw_payload_id, observed_at, fetched_at,
+    source_timestamp_ms, source_timestamp_at, observation_kind,
+    point_in_time_verified, provenance
+) VALUES ($1::uuid, $2::uuid, $3, $4, $5, $6, $7, $8, $9::jsonb)
+ON CONFLICT (odds_snapshot_id, raw_payload_id, observed_at) DO UPDATE SET
+    fetched_at = GREATEST(odds_snapshot_observations.fetched_at, EXCLUDED.fetched_at),
+    point_in_time_verified = odds_snapshot_observations.point_in_time_verified OR EXCLUDED.point_in_time_verified,
+    provenance = EXCLUDED.provenance`,
+					oddsSnapshotID, rawPayloadID, fetchedAt.UTC(), fetchedAt.UTC(), snapshot.SourceTimestampMillis,
+					snapshot.SourceTimestampUTC, observationKind, verifiedForFixture, provenance)
+				if err != nil {
+					return result, fmt.Errorf("record odds observation %s/%d/%s: %w", record.MatchID, market.ID, outcome.ID, err)
 				}
 				if oddsValid {
 					result.Accepted++
@@ -512,6 +586,24 @@ type CoverageRow struct {
 	MarketSnapshotCount  int
 	OutcomeSnapshotCount int
 	UsableOutcomeCount   int
+}
+
+// SeasonCoverageComplete is deliberately stricter than a completed job flag:
+// it requires every expected round and all eight fixture/odds match joins.
+// A season with quarantined individual outcomes can still be reused because
+// the malformed rows remain auditable and do not justify refetching complete
+// provider payloads.
+func (r *Repository) SeasonCoverageComplete(ctx context.Context, seasonID string) (bool, error) {
+	var complete bool
+	err := r.DB.QueryRowContext(ctx, `
+SELECT count(*) = 30
+   AND COALESCE(bool_and(fixture_count = 8 AND odds_match_count = 8), false)
+FROM v_odds_coverage
+WHERE season_id = $1`, seasonID).Scan(&complete)
+	if err != nil {
+		return false, fmt.Errorf("check season %s coverage: %w", seasonID, err)
+	}
+	return complete, nil
 }
 
 func (r *Repository) Coverage(ctx context.Context, seasonID string) ([]CoverageRow, error) {

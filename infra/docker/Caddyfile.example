@@ -1,0 +1,14 @@
+# Example reverse proxy for a private deployment.
+# Point the public DNS name at this host and provide a real hostname. Caddy
+# obtains and renews HTTPS certificates; do not expose the web container
+# directly to the public internet.
+dashboard.example.com {
+	encode gzip
+	reverse_proxy web:3000
+	header {
+		Referrer-Policy "no-referrer"
+		X-Content-Type-Options "nosniff"
+		X-Frame-Options "DENY"
+		Permissions-Policy "camera=(), microphone=(), geolocation=()"
+	}
+}

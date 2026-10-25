@@ -13,8 +13,8 @@ const (
 	DefaultHistoricalBaseURL = "https://vgls-vs001.akamaized.net/vfl/feeds/?/bet9javirtuals/en/America:Los_Angeles/gismo/"
 	DefaultLiveBaseURL       = "https://vglslive-vs001.akamaized.net/vfl/feeds/?/bet9ja/en/Europe:Berlin/gismo/"
 	DefaultTournamentID      = provider.TournamentID(14149)
-	ParserVersion            = "phase1-provider-parser-2026-10-25"
-	SchemaVersion            = "phase1-observed-2026-10-25"
+	ParserVersion            = "phase3-provider-parser-2026-10-25"
+	SchemaVersion            = "phase3-observed-2026-10-25"
 )
 
 type Config struct {
@@ -44,7 +44,7 @@ func DefaultConfig() Config {
 		MaxSeasons:                1,
 		SettlementConfirmation:    120 * time.Second,
 		ConnectivityEnabled:       false,
-		UserAgent:                 "bet9ja-vfl-historical-ingest/phase1",
+		UserAgent:                 "bet9ja-vfl-ingest/phase3",
 		HistoricalObservationKind: "historical_returned_after_settlement",
 	}
 }

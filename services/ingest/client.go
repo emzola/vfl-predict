@@ -26,6 +26,7 @@ type Response struct {
 	StatusCode   int
 	Body         []byte
 	FetchedAt    time.Time
+	CacheReused  bool
 	ContentType  string
 	CacheControl string
 	ETag         string
@@ -76,11 +77,15 @@ func (b *RequestBudget) Wait(ctx context.Context) error {
 type ProviderClient struct {
 	HTTPClient *http.Client
 	Budget     *RequestBudget
-	MaxRetries int
-	BaseDelay  time.Duration
-	UserAgent  string
-	Now        func() time.Time
-	Sleep      func(context.Context, time.Duration) error
+	// RequestGate coordinates the same provider spacing across worker
+	// processes when configured by a database-backed deployment. It runs before
+	// the in-process budget and never replaces retry/backoff handling.
+	RequestGate func(context.Context) error
+	MaxRetries  int
+	BaseDelay   time.Duration
+	UserAgent   string
+	Now         func() time.Time
+	Sleep       func(context.Context, time.Duration) error
 }
 
 func NewProviderClient(cfg Config, transport http.RoundTripper) *ProviderClient {
@@ -141,6 +146,11 @@ func (c *ProviderClient) Get(ctx context.Context, baseURL, relativePath string, 
 		maxRetries = 0
 	}
 	for attempt := 0; attempt <= maxRetries; attempt++ {
+		if c.RequestGate != nil {
+			if err := c.RequestGate(ctx); err != nil {
+				return nil, err
+			}
+		}
 		if c.Budget != nil {
 			if err := c.Budget.Wait(ctx); err != nil {
 				return nil, err
