@@ -102,6 +102,7 @@ services:
     environment:
       API_BASE_URL: http://api:8090
       NODE_ENV: production
+      HOSTNAME: 0.0.0.0
     depends_on:
       api:
         condition: service_healthy
