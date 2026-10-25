@@ -28,7 +28,7 @@ docker compose -f infra/docker/docker-compose.yml config
 
 ## Known limitations
 
-The endpoint DOCX was text/table inspected with the bundled `python-docx` runtime, but visual rendering was unavailable because LibreOffice is not installed on the host. Live provider behavior is entirely unvalidated. The supplied odds sample is from query season `3149336` and does not join either supplied fixture sample, so the Phase 0 tests intentionally do not claim an odds-to-fixture join.
+The endpoint DOCX was text/table inspected with the bundled `python-docx` runtime, but visual rendering was unavailable because LibreOffice is not installed on the host. Live provider behavior was entirely unvalidated at the end of Phase 0; the limited Phase 1 probe is documented in [phase-1-report.md](phase-1-report.md). The supplied odds sample is from query season `3149336` and does not join either supplied fixture sample, so the Phase 0 tests intentionally do not claim an odds-to-fixture join.
 
 ## Next phase
 

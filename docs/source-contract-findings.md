@@ -2,7 +2,7 @@
 
 ## Evidence inspected
 
-The supplied endpoint document was extracted from `bet9ja endoints.docx` using the bundled `python-docx` runtime. Its table lists the same seven endpoint families described by the engineering specification: season discovery, fixtures/results, season metadata, round odds, team position history, and live table. No live request was made. The bundled DOCX-to-PNG renderer could not run because LibreOffice is not installed on the execution host; the document text and table content were still inspected read-only.
+The supplied endpoint document was extracted from `bet9ja endoints.docx` using the bundled `python-docx` runtime. Its table lists the same seven endpoint families described by the engineering specification: season discovery, fixtures/results, season metadata, round odds, team position history, and live table. No live request was made during Phase 0. The bundled DOCX-to-PNG renderer could not run because LibreOffice is not installed on the execution host; the document text and table content were still inspected read-only. Phase 1 live findings are recorded separately in [phase-1-report.md](phase-1-report.md).
 
 The seven supplied JSON payloads were copied verbatim to `fixtures/provider/` with stable names. They contain no credential-like fields in the credential scan used for this Phase 0 import.
 
@@ -27,6 +27,6 @@ The seven supplied JSON payloads were copied verbatim to `fixtures/provider/` wi
 5. The odds payload contains `market.specifiers: null` for 80 markets and strings for the remainder. Market ID alone is not a unique market identity.
 6. The completed fixture sample returns `status: null` and `inlivescore: true` even when scores are present. These fields are retained but not treated as authoritative completion evidence.
 
-## Phase 0 implementation boundary
+## Phase 0 implementation boundary (historical)
 
-The repository validates only the supplied payloads. The configured provider URLs are documentation/configuration values, and `BET9JA_CONNECTIVITY_ENABLED` defaults to `false`. Connectivity, request encoding, authentication/session behavior, and provider semantics require an authorized validation run described in [integration-test-plan.md](integration-test-plan.md).
+At the end of Phase 0, the repository validated only the supplied payloads. The configured provider URLs remain disabled by default. The limited authorized Phase 1 validation and its remaining scope are documented in [phase-1-report.md](phase-1-report.md); it does not resolve all connectivity, authentication/session, or provider-semantic questions.

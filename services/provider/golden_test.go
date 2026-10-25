@@ -179,6 +179,34 @@ func TestParseOddsGolden(t *testing.T) {
 	}
 }
 
+func TestParseSeasonDiscoveryGolden(t *testing.T) {
+	payload, err := ParseSeasonDiscovery(readProviderFixture(t, "historical-seasons.json"))
+	if err != nil {
+		t.Fatalf("parse season discovery: %v", err)
+	}
+	if payload.QueryURL != "uniquetournament_seasons/14149" {
+		t.Fatalf("query URL = %q", payload.QueryURL)
+	}
+	if len(payload.Seasons) != 169 {
+		t.Fatalf("season count = %d, want 169", len(payload.Seasons))
+	}
+	current := 0
+	for _, season := range payload.Seasons {
+		if season.Current {
+			current++
+			if season.ID != SeasonID("3149336") {
+				t.Fatalf("current season ID = %s, want 3149336", season.ID)
+			}
+		}
+		if season.StartUTC.IsZero() || season.EndUTC.IsZero() {
+			t.Fatalf("season %s has missing normalized dates", season.ID)
+		}
+	}
+	if current != 1 {
+		t.Fatalf("current season count = %d, want 1", current)
+	}
+}
+
 func TestOddsAndFixtureSamplesHaveNoJoinableIDs(t *testing.T) {
 	odds, err := ParseOdds(readProviderFixture(t, "historical-match-odds.json"))
 	if err != nil {

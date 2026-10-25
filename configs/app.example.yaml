@@ -7,9 +7,14 @@ connectivity:
   request_spacing_seconds: 10
   prediction_safety_buffer_seconds: 30
   settlement_confirmation_window_seconds: 120
+ingestion:
+  max_seasons_per_run: 1
+  max_batch_seasons: 10
+  historical_observation_kind: historical_returned_after_settlement
+  point_in_time_verified_by_default: false
 storage:
   raw_payload_retention: preserve
   odds_snapshot_retention: preserve
 contracts:
-  provider_schema_version: "phase0-observed-2026-10-25"
+  provider_schema_version: "phase1-observed-2026-10-25"
   allow_unknown_provider_fields: true
