@@ -1,0 +1,32 @@
+name: phase-0-contracts
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  contracts:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.24.x'
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Go tests
+        run: go test ./...
+      - name: Go formatting and vet
+        shell: bash
+        run: |
+          test -z "$(gofmt -l services/provider)"
+          go vet ./...
+      - name: Python contract tests
+        run: python -m unittest discover -s services/model/tests -p 'test_*.py'
+      - name: Python compile check
+        run: python -m compileall -q services/model
+      - name: Validate Compose configuration
+        env:
+          POSTGRES_PASSWORD: ci-placeholder-only
+        run: docker compose -f infra/docker/docker-compose.yml config --quiet

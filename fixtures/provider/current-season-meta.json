@@ -1,0 +1,117 @@
+{
+    "queryUrl": "stats_season_meta\/3149369",
+    "doc": [
+        {
+            "event": "stats_season_meta",
+            "_dob": 1792865896,
+            "_maxage": 3600,
+            "data": {
+                "season": {
+                    "_id": "3149369",
+                    "_doc": "season",
+                    "_utid": 14149,
+                    "_sid": 1,
+                    "name": "Virtual Football League Mode 46881",
+                    "abbr": "VFLM 46881",
+                    "start": {
+                        "_doc": "time",
+                        "time": "18:20",
+                        "date": "24\/10\/26",
+                        "tz": "UTC",
+                        "tzoffset": 0,
+                        "uts": 1792866054
+                    },
+                    "end": {
+                        "_doc": "time",
+                        "time": "20:12",
+                        "date": "24\/10\/26",
+                        "tz": "UTC",
+                        "tzoffset": 0,
+                        "uts": 1792872774
+                    },
+                    "neutralground": false,
+                    "friendly": false,
+                    "currentseasonid": 3149336,
+                    "year": "46881",
+                    "coverage": {
+                        "lineups": true
+                    },
+                    "h2hdefault": {
+                        "matchid": 0,
+                        "teamidhome": 0,
+                        "teamidaway": 0
+                    }
+                },
+                "sport": {
+                    "_doc": "sport",
+                    "_id": 1,
+                    "_sid": 1,
+                    "name": "Soccer"
+                },
+                "realcategory": {
+                    "_doc": "realcategory",
+                    "_id": 1111,
+                    "_sid": 1,
+                    "_rcid": 1111,
+                    "name": "Virtual Football",
+                    "cc": null
+                },
+                "tournamentids": [
+                    54879
+                ],
+                "tableids": [
+                    9901186
+                ],
+                "cupids": [],
+                "uniquetournament": {
+                    "_doc": "uniquetournament",
+                    "_id": 14149,
+                    "_utid": 14149,
+                    "_sid": 1,
+                    "_rcid": 1111,
+                    "name": "Virtual Football League Mode",
+                    "currentseason": 3149336,
+                    "friendly": false
+                },
+                "statscoverage": {
+                    "complexstat": true,
+                    "livetable": true,
+                    "halftimetable": true,
+                    "overunder": true,
+                    "overunderhalftime": true,
+                    "fixtures": true,
+                    "leaguetable": true,
+                    "distancecharts": true,
+                    "resulthistory": true,
+                    "tablerules": true,
+                    "headtohead": true,
+                    "formtable": true,
+                    "secondhalftables": true,
+                    "divisionview": true,
+                    "matchdetails": true,
+                    "resultmatrix": true,
+                    "lineups": true,
+                    "redcards": true,
+                    "yellowcards": true,
+                    "substitutions": true,
+                    "squadservice": true,
+                    "livescoreeventthrowin": true,
+                    "livescoreeventgoalkick": true,
+                    "livescoreeventfreekick": true,
+                    "livescoreeventshotsoffgoal": true,
+                    "livescoreeventshotsongoal": true,
+                    "livescoreeventgoalkeepersave": true,
+                    "livescoreeventcornerkick": true,
+                    "livescoreeventoffside": true,
+                    "livescoreeventfouls": true,
+                    "livescoreeventpossesion": true,
+                    "stadium": true,
+                    "staffmanagers": false,
+                    "staffteamofficials": false,
+                    "staffassistantcoaches": false,
+                    "jerseys": false
+                }
+            }
+        }
+    ]
+}

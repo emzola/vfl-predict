@@ -1,0 +1,273 @@
+openapi: 3.1.0
+info:
+  title: Bet9ja VFL internal API
+  version: 0.1.0-phase0
+  description: >-
+    Phase 0 contract boundary only. No endpoint in this document asserts that
+    the provider is reachable or that a prediction algorithm exists.
+    Authentication and implementation are deferred to later phases.
+  x-contract-status: observed-and-planned-not-live
+paths:
+  /api/v1/system/health:
+    get:
+      summary: Read service health
+      operationId: getSystemHealth
+      responses:
+        '200':
+          description: Health document
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Health'
+        '503':
+          description: Service is not ready
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+  /api/v1/seasons/{seasonId}/rounds/{round}/fixtures:
+    get:
+      summary: List normalized fixtures for one round
+      operationId: listRoundFixtures
+      parameters:
+        - $ref: '#/components/parameters/SeasonId'
+        - $ref: '#/components/parameters/Round'
+      responses:
+        '200':
+          description: Fixture list
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [season_id, round, fixtures]
+                properties:
+                  season_id:
+                    $ref: '#/components/schemas/SeasonId'
+                  round:
+                    $ref: '#/components/schemas/Round'
+                  fixtures:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/Fixture'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+  /api/v1/matches/{matchId}/odds:
+    get:
+      summary: List retained odds snapshots for one match
+      operationId: listMatchOdds
+      parameters:
+        - name: matchId
+          in: path
+          required: true
+          schema:
+            $ref: '#/components/schemas/MatchId'
+      responses:
+        '200':
+          description: Odds snapshot list
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [match_id, snapshots]
+                properties:
+                  match_id:
+                    $ref: '#/components/schemas/MatchId'
+                  snapshots:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/OddsSnapshot'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+components:
+  parameters:
+    SeasonId:
+      name: seasonId
+      in: path
+      required: true
+      schema:
+        $ref: '#/components/schemas/SeasonId'
+    Round:
+      name: round
+      in: path
+      required: true
+      schema:
+        $ref: '#/components/schemas/Round'
+  responses:
+    Unauthorized:
+      description: Authentication required
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+    NotFound:
+      description: Resource not found
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+  schemas:
+    SeasonId:
+      type: string
+      pattern: '^[0-9]+$'
+      example: '3149311'
+    TournamentId:
+      type: integer
+      minimum: 1
+      example: 14149
+    MatchId:
+      type: integer
+      minimum: 1
+      example: 1412171310
+    TeamUid:
+      type: integer
+      minimum: 1
+      example: 276506
+    Round:
+      type: integer
+      minimum: 1
+      maximum: 30
+      example: 23
+    DecimalOdds:
+      type: string
+      pattern: '^[0-9]+(\.[0-9]+)?$'
+      description: Positive decimal value stored as text; zero is rejected during normalization.
+      example: '1.75'
+    Score:
+      type: object
+      required: [home, away]
+      properties:
+        home:
+          type: integer
+          minimum: 0
+        away:
+          type: integer
+          minimum: 0
+    TeamRef:
+      type: object
+      required: [uid, name, abbreviation]
+      properties:
+        uid:
+          $ref: '#/components/schemas/TeamUid'
+        name:
+          type: string
+        abbreviation:
+          type: string
+        provider_id:
+          type: integer
+    Fixture:
+      type: object
+      required: [match_id, season_id, tournament_id, round, scheduled_uts, home, away, status]
+      properties:
+        match_id:
+          $ref: '#/components/schemas/MatchId'
+        season_id:
+          $ref: '#/components/schemas/SeasonId'
+        tournament_id:
+          $ref: '#/components/schemas/TournamentId'
+        round:
+          $ref: '#/components/schemas/Round'
+        scheduled_uts:
+          type: integer
+          format: int64
+        home:
+          $ref: '#/components/schemas/TeamRef'
+        away:
+          $ref: '#/components/schemas/TeamRef'
+        score:
+          oneOf:
+            - $ref: '#/components/schemas/Score'
+            - type: 'null'
+        status:
+          type: string
+          enum: [scheduled, in_progress, completed, canceled, postponed, unknown]
+    MarketIdentity:
+      type: object
+      required: [match_id, market_id, specifiers, outcome_id]
+      properties:
+        match_id:
+          $ref: '#/components/schemas/MatchId'
+        market_id:
+          type: integer
+          minimum: 1
+        specifiers:
+          type: string
+          description: Canonical text key; provider URL decoding remains unvalidated.
+        outcome_id:
+          type: string
+    OddsOutcome:
+      type: object
+      required: [id, raw_odds, active, provider_result]
+      properties:
+        id:
+          type: string
+        raw_odds:
+          type: string
+        odds:
+          oneOf:
+            - $ref: '#/components/schemas/DecimalOdds'
+            - type: 'null'
+        odds_error:
+          type: string
+        active:
+          type: integer
+        provider_result:
+          type: integer
+    OddsMarket:
+      type: object
+      required: [id, name, specifiers, status, outcomes]
+      properties:
+        id:
+          type: integer
+          minimum: 1
+        name:
+          type: string
+        specifiers:
+          type: string
+        status:
+          type: integer
+        outcomes:
+          type: array
+          items:
+            $ref: '#/components/schemas/OddsOutcome'
+    OddsSnapshot:
+      type: object
+      required: [match_id, source_timestamp_millis, markets]
+      properties:
+        match_id:
+          $ref: '#/components/schemas/MatchId'
+        source_timestamp_millis:
+          type: integer
+          format: int64
+        markets:
+          type: array
+          items:
+            $ref: '#/components/schemas/OddsMarket'
+        identities:
+          type: array
+          items:
+            $ref: '#/components/schemas/MarketIdentity'
+    Health:
+      type: object
+      required: [status, phase, provider_connectivity]
+      properties:
+        status:
+          type: string
+          enum: [ok, degraded, unavailable]
+        phase:
+          type: string
+          example: phase0
+        provider_connectivity:
+          type: string
+          enum: [disabled, unvalidated, validated]
+    Error:
+      type: object
+      required: [code, message]
+      properties:
+        code:
+          type: string
+        message:
+          type: string

@@ -1,0 +1,132 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://example.invalid/bet9ja-vfl/provider-fixtures.schema.json",
+  "title": "Observed Bet9ja fixture response envelope",
+  "type": "object",
+  "required": ["queryUrl", "doc"],
+  "properties": {
+    "queryUrl": { "type": "string", "minLength": 1 },
+    "doc": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "required": ["data"],
+        "properties": {
+          "event": { "type": "string" },
+          "_dob": { "type": ["integer", "null"] },
+          "_maxage": { "type": ["integer", "null"] },
+          "_pages": { "type": ["integer", "null"] },
+          "data": {
+            "type": "object",
+            "required": ["_id", "_utid", "start", "end", "matches"],
+            "properties": {
+              "_id": { "type": ["string", "integer"] },
+              "_utid": { "type": "integer" },
+              "currentseasonid": { "type": ["string", "integer", "null"] },
+              "name": { "type": "string" },
+              "abbr": { "type": "string" },
+              "year": { "type": ["string", "integer", "null"] },
+              "start": { "$ref": "#/$defs/providerTime" },
+              "end": { "$ref": "#/$defs/providerTime" },
+              "matches": {
+                "type": "array",
+                "items": { "$ref": "#/$defs/providerMatch" }
+              }
+            },
+            "additionalProperties": true
+          }
+        },
+        "additionalProperties": true
+      }
+    }
+  },
+  "$defs": {
+    "providerTime": {
+      "type": "object",
+      "required": ["uts"],
+      "properties": {
+        "date": { "type": "string" },
+        "time": { "type": "string" },
+        "tz": { "type": "string" },
+        "tzoffset": { "type": "integer" },
+        "uts": { "type": "integer" }
+      },
+      "additionalProperties": true
+    },
+    "providerTeam": {
+      "type": "object",
+      "required": ["_id", "uid", "name", "abbr"],
+      "properties": {
+        "_id": { "type": "integer" },
+        "uid": { "type": "integer" },
+        "name": { "type": "string" },
+        "mediumname": { "type": "string" },
+        "abbr": { "type": "string" },
+        "nickname": { "type": ["string", "null"] }
+      },
+      "additionalProperties": true
+    },
+    "providerScore": {
+      "type": "object",
+      "required": ["home", "away"],
+      "properties": {
+        "home": { "type": "integer", "minimum": 0 },
+        "away": { "type": "integer", "minimum": 0 }
+      },
+      "additionalProperties": true
+    },
+    "providerResult": {
+      "type": "object",
+      "required": ["home", "away"],
+      "properties": {
+        "home": { "type": ["integer", "null"], "minimum": 0 },
+        "away": { "type": ["integer", "null"], "minimum": 0 },
+        "period": { "type": ["string", "null"] },
+        "winner": { "type": ["string", "null"] }
+      },
+      "additionalProperties": true
+    },
+    "providerPeriods": {
+      "oneOf": [
+        {
+          "type": "object",
+          "properties": {
+            "p1": { "$ref": "#/$defs/providerScore" },
+            "ft": { "$ref": "#/$defs/providerScore" }
+          },
+          "additionalProperties": true
+        },
+        { "type": "array" },
+        { "type": "null" }
+      ]
+    },
+    "providerMatch": {
+      "type": "object",
+      "required": ["_id", "_seasonid", "round", "time", "teams", "result", "periods"],
+      "properties": {
+        "_id": { "type": "integer" },
+        "_seasonid": { "type": ["integer", "string"] },
+        "round": { "type": "integer", "minimum": 1, "maximum": 30 },
+        "time": { "$ref": "#/$defs/providerTime" },
+        "teams": {
+          "type": "object",
+          "required": ["home", "away"],
+          "properties": {
+            "home": { "$ref": "#/$defs/providerTeam" },
+            "away": { "$ref": "#/$defs/providerTeam" }
+          },
+          "additionalProperties": true
+        },
+        "result": { "$ref": "#/$defs/providerResult" },
+        "periods": { "$ref": "#/$defs/providerPeriods" },
+        "status": {},
+        "postponed": { "type": "boolean" },
+        "canceled": { "type": "boolean" },
+        "walkover": { "type": "boolean" }
+      },
+      "additionalProperties": true
+    }
+  },
+  "additionalProperties": true
+}

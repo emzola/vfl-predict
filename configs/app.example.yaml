@@ -1,0 +1,15 @@
+app_env: development
+connectivity:
+  enabled: false
+  historical_base_url: "https://vgls-vs001.akamaized.net/vfl/feeds/?/bet9javirtuals/en/America:Los_Angeles/gismo/"
+  live_base_url: "https://vglslive-vs001.akamaized.net/vfl/feeds/?/bet9ja/en/Europe:Berlin/gismo/"
+  tournament_id: 14149
+  request_spacing_seconds: 10
+  prediction_safety_buffer_seconds: 30
+  settlement_confirmation_window_seconds: 120
+storage:
+  raw_payload_retention: preserve
+  odds_snapshot_retention: preserve
+contracts:
+  provider_schema_version: "phase0-observed-2026-10-25"
+  allow_unknown_provider_fields: true

@@ -1,0 +1,329 @@
+{
+    "queryUrl": "stats_season_teampositionhistory\/3149311\/276510",
+    "doc": [
+        {
+            "event": "stats_season_teampositionhistory",
+            "_dob": 1792865315,
+            "_maxage": 20,
+            "data": {
+                "teams": {
+                    "276510": {
+                        "_doc": "uniqueteam",
+                        "_id": 276510,
+                        "_sid": 1,
+                        "_rcid": 1111,
+                        "name": "VL Madrid",
+                        "mediumname": "VL Madrid",
+                        "suffix": null,
+                        "abbr": "MAD",
+                        "nickname": null,
+                        "teamtypeid": 0,
+                        "iscountry": false,
+                        "sex": "m",
+                        "haslogo": true,
+                        "founded": null,
+                        "website": null
+                    }
+                },
+                "teamcount": 16,
+                "roundcount": 30,
+                "jersey": {
+                    "276510": {
+                        "base": "5daeff",
+                        "sleeve": "5daeff",
+                        "number": "000000",
+                        "real": true,
+                        "type": "short_sleeves"
+                    }
+                },
+                "season": {
+                    "_id": "3149311",
+                    "_doc": "season",
+                    "_utid": 14149,
+                    "_sid": 1,
+                    "name": "Virtual Football League Mode 46879",
+                    "abbr": "VFLM 46879",
+                    "start": {
+                        "_doc": "time",
+                        "time": "14:36",
+                        "date": "24\/10\/26",
+                        "tz": "UTC",
+                        "tzoffset": 0,
+                        "uts": 1792852614
+                    },
+                    "end": {
+                        "_doc": "time",
+                        "time": "16:28",
+                        "date": "24\/10\/26",
+                        "tz": "UTC",
+                        "tzoffset": 0,
+                        "uts": 1792859334
+                    },
+                    "neutralground": false,
+                    "friendly": false,
+                    "currentseasonid": 3149336,
+                    "year": "46879"
+                },
+                "tables": {
+                    "9900957": {
+                        "_doc": "statistics_table",
+                        "_id": "9900957",
+                        "tournamentid": 54879,
+                        "name": "Virtual Football League Mode",
+                        "abbr": "VFLM",
+                        "groupname": null,
+                        "maxrounds": "3",
+                        "seasonid": "3149311",
+                        "seasontype": "21",
+                        "seasontypename": "Group Phase 1",
+                        "seasontypeunique": "6",
+                        "start": {
+                            "_doc": "time",
+                            "time": "14:36",
+                            "date": "24\/10\/26",
+                            "tz": "UTC",
+                            "tzoffset": 0,
+                            "uts": 1792852614
+                        },
+                        "end": {
+                            "_doc": "time",
+                            "time": "16:28",
+                            "date": "24\/10\/26",
+                            "tz": "UTC",
+                            "tzoffset": 0,
+                            "uts": 1792859334
+                        },
+                        "roundbyround": true,
+                        "order": 9900957
+                    }
+                },
+                "positiondata": [],
+                "previousseason": {
+                    "276510": {
+                        "_doc": "seasonpos",
+                        "round": 30,
+                        "position": 1,
+                        "seasonid": 3149281,
+                        "matchid": 1412166382,
+                        "moved": null
+                    }
+                },
+                "currentseason": {
+                    "276510": [
+                        {
+                            "_doc": "seasonpos",
+                            "round": 1,
+                            "position": 11,
+                            "seasonid": 3149311,
+                            "matchid": 1412171316
+                        },
+                        {
+                            "_doc": "seasonpos",
+                            "round": 2,
+                            "position": 8,
+                            "seasonid": 3149311,
+                            "matchid": 1412171322
+                        },
+                        {
+                            "_doc": "seasonpos",
+                            "round": 3,
+                            "position": 6,
+                            "seasonid": 3149311,
+                            "matchid": 1412171327
+                        },
+                        {
+                            "_doc": "seasonpos",
+                            "round": 4,
+                            "position": 3,
+                            "seasonid": 3149311,
+                            "matchid": 1412171337
+                        },
+                        {
+                            "_doc": "seasonpos",
+                            "round": 5,
+                            "position": 2,
+                            "seasonid": 3149311,
+                            "matchid": 1412171342
+                        },
+                        {
+                            "_doc": "seasonpos",
+                            "round": 6,
+                            "position": 1,
+                            "seasonid": 3149311,
+                            "matchid": 1412171351
+                        },
+                        {
+                            "_doc": "seasonpos",
+                            "round": 7,
+                            "position": 1,
+                            "seasonid": 3149311,
+                            "matchid": 1412171359
+                        },
+                        {
+                            "_doc": "seasonpos",
+                            "round": 8,
+                            "position": 1,
+                            "seasonid": 3149311,
+                            "matchid": 1412171373
+                        },
+                        {
+                            "_doc": "seasonpos",
+                            "round": 9,
+                            "position": 1,
+                            "seasonid": 3149311,
+                            "matchid": 1412171379
+                        },
+                        {
+                            "_doc": "seasonpos",
+                            "round": 10,
+                            "position": 1,
+                            "seasonid": 3149311,
+                            "matchid": 1412171386
+                        },
+                        {
+                            "_doc": "seasonpos",
+                            "round": 11,
+                            "position": 1,
+                            "seasonid": 3149311,
+                            "matchid": 1412171391
+                        },
+                        {
+                            "_doc": "seasonpos",
+                            "round": 12,
+                            "position": 1,
+                            "seasonid": 3149311,
+                            "matchid": 1412171401
+                        },
+                        {
+                            "_doc": "seasonpos",
+                            "round": 13,
+                            "position": 1,
+                            "seasonid": 3149311,
+                            "matchid": 1412171413
+                        },
+                        {
+                            "_doc": "seasonpos",
+                            "round": 14,
+                            "position": 1,
+                            "seasonid": 3149311,
+                            "matchid": 1412171416
+                        },
+                        {
+                            "_doc": "seasonpos",
+                            "round": 15,
+                            "position": 1,
+                            "seasonid": 3149311,
+                            "matchid": 1412171423
+                        },
+                        {
+                            "_doc": "seasonpos",
+                            "round": 16,
+                            "position": 1,
+                            "seasonid": 3149311,
+                            "matchid": 1412171436
+                        },
+                        {
+                            "_doc": "seasonpos",
+                            "round": 17,
+                            "position": 3,
+                            "seasonid": 3149311,
+                            "matchid": 1412171442
+                        },
+                        {
+                            "_doc": "seasonpos",
+                            "round": 18,
+                            "position": 1,
+                            "seasonid": 3149311,
+                            "matchid": 1412171447
+                        },
+                        {
+                            "_doc": "seasonpos",
+                            "round": 19,
+                            "position": 2,
+                            "seasonid": 3149311,
+                            "matchid": 1412171457
+                        },
+                        {
+                            "_doc": "seasonpos",
+                            "round": 20,
+                            "position": 1,
+                            "seasonid": 3149311,
+                            "matchid": 1412171462
+                        },
+                        {
+                            "_doc": "seasonpos",
+                            "round": 21,
+                            "position": 1,
+                            "seasonid": 3149311,
+                            "matchid": 1412171471
+                        },
+                        {
+                            "_doc": "seasonpos",
+                            "round": 22,
+                            "position": 1,
+                            "seasonid": 3149311,
+                            "matchid": 1412171479
+                        },
+                        {
+                            "_doc": "seasonpos",
+                            "round": 23,
+                            "position": 1,
+                            "seasonid": 3149311,
+                            "matchid": 1412171493
+                        },
+                        {
+                            "_doc": "seasonpos",
+                            "round": 24,
+                            "position": 1,
+                            "seasonid": 3149311,
+                            "matchid": 1412171499
+                        },
+                        {
+                            "_doc": "seasonpos",
+                            "round": 25,
+                            "position": 1,
+                            "seasonid": 3149311,
+                            "matchid": 1412171506
+                        },
+                        {
+                            "_doc": "seasonpos",
+                            "round": 26,
+                            "position": 1,
+                            "seasonid": 3149311,
+                            "matchid": 1412171511
+                        },
+                        {
+                            "_doc": "seasonpos",
+                            "round": 27,
+                            "position": 1,
+                            "seasonid": 3149311,
+                            "matchid": 1412171521
+                        },
+                        {
+                            "_doc": "seasonpos",
+                            "round": 28,
+                            "position": 1,
+                            "seasonid": 3149311,
+                            "matchid": 1412171533
+                        },
+                        {
+                            "_doc": "seasonpos",
+                            "round": 29,
+                            "position": 1,
+                            "seasonid": 3149311,
+                            "matchid": 1412171536
+                        },
+                        {
+                            "_doc": "seasonpos",
+                            "round": 30,
+                            "position": 1,
+                            "seasonid": 3149311,
+                            "matchid": 1412171543
+                        }
+                    ]
+                },
+                "matchesmissing": []
+            }
+        }
+    ]
+}

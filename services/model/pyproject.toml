@@ -1,0 +1,10 @@
+[project]
+name = "bet9ja-vfl-contracts"
+version = "0.1.0"
+description = "Phase 0 provider contract types for Bet9ja VFL"
+requires-python = ">=3.12"
+dependencies = []
+
+[tool.ruff]
+target-version = "py312"
+line-length = 100

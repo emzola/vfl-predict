@@ -1,0 +1,55 @@
+# Secrets and local configuration
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+*.p12
+*.pfx
+
+# Supplied source materials kept outside version control
+/BET9JA_VFL_CODEX_ENGINEERING_SPEC.md
+/bet9ja endoints.docx
+/Completed season results endpoint JSON response.txt
+/Current season information endpoint JSON response.txt
+/Historical match odds endpoint JSON response.txt
+/Historical seasons list endpoint JSON response.txt
+/Historical team statistics position history endpoint JSON response.txt
+/Live matchday status endpoint JSON response.txt
+/Upcoming matchdays endpoint JSON response.txt
+
+# Local data and generated artifacts
+data/
+tmp/
+artifacts/
+coverage/
+docs/source-review/endpoint-docx-render/*.pdf
+docs/source-review/endpoint-docx-render/page-*.png
+
+# Go
+bin/
+*.test
+*.out
+
+# Python
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.venv/
+venv/
+
+# Node / Next.js
+node_modules/
+.next/
+out/
+npm-debug.log*
+pnpm-debug.log*
+
+# IDE / OS
+.idea/
+.vscode/
+*.swp
+Thumbs.db
+Desktop.ini

@@ -1,0 +1,10 @@
+.git
+.env
+.env.*
+!.env.example
+data
+tmp
+artifacts
+node_modules
+__pycache__
+*.pyc

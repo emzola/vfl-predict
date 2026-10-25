@@ -1,0 +1,92 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://example.invalid/bet9ja-vfl/provider-odds.schema.json",
+  "title": "Observed Bet9ja odds response envelope",
+  "type": "object",
+  "required": ["queryUrl", "doc"],
+  "properties": {
+    "queryUrl": { "type": "string", "minLength": 1 },
+    "doc": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "required": ["data", "timestamp"],
+        "properties": {
+          "timestamp": { "type": "integer" },
+          "data": {
+            "type": "object",
+            "required": ["odds"],
+            "properties": {
+              "odds": {
+                "type": "array",
+                "items": { "$ref": "#/$defs/oddsRecord" }
+              }
+            },
+            "additionalProperties": true
+          }
+        },
+        "additionalProperties": true
+      }
+    }
+  },
+  "$defs": {
+    "oddsTeam": {
+      "type": "object",
+      "required": ["id", "name", "abbr"],
+      "properties": {
+        "id": { "type": "string" },
+        "name": { "type": "string" },
+        "abbr": { "type": "string" }
+      },
+      "additionalProperties": true
+    },
+    "outcome": {
+      "type": "object",
+      "required": ["id", "name", "abbr", "odds", "active", "result"],
+      "properties": {
+        "id": { "type": "string" },
+        "name": { "type": "string" },
+        "abbr": { "type": "string" },
+        "odds": { "type": "string" },
+        "active": { "type": "integer" },
+        "result": { "type": "integer" }
+      },
+      "additionalProperties": true
+    },
+    "market": {
+      "type": "object",
+      "required": ["id", "name", "status", "outcome"],
+      "properties": {
+        "id": { "type": "integer" },
+        "name": { "type": "string" },
+        "specifiers": { "type": ["string", "null"] },
+        "status": { "type": "integer" },
+        "favourite": { "type": ["integer", "null"] },
+        "outcome": { "type": "array", "items": { "$ref": "#/$defs/outcome" } }
+      },
+      "additionalProperties": true
+    },
+    "oddsRecord": {
+      "type": "object",
+      "required": ["id", "sport_id", "tournament_id", "teams", "market"],
+      "properties": {
+        "id": { "type": "string", "pattern": "^vf:match:[0-9]+$" },
+        "sport_id": { "type": "string" },
+        "tournament_id": { "type": "string", "pattern": "^vf:tournament:[0-9]+$" },
+        "teams": {
+          "type": "object",
+          "required": ["home", "away"],
+          "properties": {
+            "home": { "$ref": "#/$defs/oddsTeam" },
+            "away": { "$ref": "#/$defs/oddsTeam" }
+          },
+          "additionalProperties": true
+        },
+        "market": { "type": "array", "items": { "$ref": "#/$defs/market" } }
+      },
+      "additionalProperties": true
+    }
+  },
+  "additionalProperties": true
+}

@@ -1,0 +1,26 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://example.invalid/bet9ja-vfl/canonical-identifiers.schema.json",
+  "title": "Bet9ja VFL canonical identifier values",
+  "type": "object",
+  "required": ["season_id", "tournament_id", "match_id", "team_uid", "round", "market_identity"],
+  "properties": {
+    "season_id": { "type": "string", "pattern": "^[0-9]+$" },
+    "tournament_id": { "type": "integer", "minimum": 1 },
+    "match_id": { "type": "integer", "minimum": 1 },
+    "team_uid": { "type": "integer", "minimum": 1 },
+    "round": { "type": "integer", "minimum": 1, "maximum": 30 },
+    "market_identity": {
+      "type": "object",
+      "required": ["match_id", "market_id", "specifiers", "outcome_id"],
+      "properties": {
+        "match_id": { "type": "integer", "minimum": 1 },
+        "market_id": { "type": "integer", "minimum": 1 },
+        "specifiers": { "type": "string" },
+        "outcome_id": { "type": "string", "minLength": 1 }
+      },
+      "additionalProperties": false
+    }
+  },
+  "additionalProperties": false
+}
