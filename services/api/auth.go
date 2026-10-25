@@ -197,6 +197,19 @@ func AuthConfigFromEnv() AuthConfig {
 			token: os.Getenv("EMAIL_PROVIDER_TOKEN"),
 			from:  strings.TrimSpace(os.Getenv("EMAIL_FROM")),
 		}
+	case "resend":
+		endpoint := strings.TrimRight(strings.TrimSpace(os.Getenv("RESEND_API_URL")), "/")
+		if endpoint == "" {
+			endpoint = "https://api.resend.com"
+		}
+		if !strings.HasSuffix(endpoint, "/emails") {
+			endpoint += "/emails"
+		}
+		cfg.Mailer = resendMailer{
+			url:    endpoint,
+			apiKey: os.Getenv("RESEND_API_KEY"),
+			from:   strings.TrimSpace(os.Getenv("EMAIL_FROM")),
+		}
 	default:
 		cfg.Mailer = unavailableMailer{}
 	}

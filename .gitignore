@@ -1,6 +1,10 @@
 # Secrets and local configuration
 .env
 .env.*
+infra/docker/.env.production
+infra/docker/releases/
+infra/docker/image-digests.txt
+!infra/docker/.env.production.example
 !.env.example
 *.pem
 *.key
@@ -44,6 +48,9 @@ venv/
 node_modules/
 .next/
 out/
+apps/web/test-results/
+apps/web/playwright-report/
+*.tsbuildinfo
 npm-debug.log*
 pnpm-debug.log*
 

@@ -38,11 +38,11 @@ func TestStorageAuditAndRetentionPlanIntegration(t *testing.T) {
 		t.Fatalf("invalid retention plan: %+v", plan)
 	}
 	required := map[string]bool{
-		"fixtures_results_and_teams":      false,
-		"verified_pre_cutoff_odds":        false,
-		"frozen_predictions_and_settlements": false,
-		"raw_provider_payloads":           false,
-		"job_execution_history":           false,
+		"fixtures_results_and_teams":            false,
+		"verified_pre_cutoff_odds":              false,
+		"frozen_predictions_and_settlements":    false,
+		"raw_provider_payloads":                 false,
+		"job_execution_history":                 false,
 		"auth_ephemeral_tokens_and_rate_limits": false,
 	}
 	for _, policy := range plan.Policies {

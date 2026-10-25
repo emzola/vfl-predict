@@ -173,3 +173,23 @@ requests, enable production email delivery, or validate a live Bet9ja feed.
 These findings do not resolve the provider-side assumptions listed above or
 claim production readiness. They supersede the Phase 4 report's earlier
 frontend/npm and PostgreSQL verification omissions.
+
+## Phase 5 deployment-preparation update (2026-10-25)
+
+Phase 5 adds deployment preparation only. No Contabo host, Cloudflare zone,
+GHCR production package, or Resend account was accessed, and no live provider
+request was made by this phase.
+
+| ID | Phase 5 finding | Remaining limitation |
+|---|---|---|
+| API-49 | The existing `MagicLinkMailer` contract now has a Resend adapter. Its request envelope, bearer authorization handling, and failure behavior pass against an isolated local HTTP test server; production startup fails closed when HTTPS, secure cookies, the authorized email, or Resend configuration is missing. | A real Resend delivery and callback have not been completed. Sender-domain SPF/DKIM values must be copied from Resend into Cloudflare by the operator; no DNS values are invented here. |
+| API-50 | Production Compose has one explicit `cmd/migrate` service. API/workers disable startup migrations, the PostgreSQL advisory lock remains authoritative, and `schema_migrations` records ordered filenames and SHA-256 checksums. A disposable Phase 4.1 database adopted all 11 records and passed a second idempotent run. | A production migration has not been applied. Any release changing `db/migrations/*.sql` is classified high risk and requires an explicit manual workflow confirmation. |
+| API-51 | The application images build locally, image release tags are commit-SHA based, CI records digests, deployment uses SSH host-key verification plus a host `flock`, and rollback is image-only. | GHCR pull credentials, VPS health checks, worker transition behavior, and rollback compatibility remain unverified on the target host. |
+| API-52 | Caddy configuration validates in the official container and filters magic-link query tokens/cookies from access logs. Only Caddy publishes ports 80/443 in production Compose. | Cloudflare Full (strict), origin certificate issuance/renewal, firewall allowlists, DNS, and actual HTTPS routing remain operator gates. |
+| API-53 | The frontend lockfile now includes Playwright 1.55.1. Unit tests exclude browser suites; four deterministic login/dashboard/mobile browser tests pass locally. | The browser tests use local API fixtures and do not prove real email delivery, production authentication, or genuine forward prediction data. |
+| API-54 | The production prediction default is now `bookmaker_first`: a complete, point-in-time-verified 1X2 line observed at or before the cutoff supplies normalized bookmaker probabilities; the fitted Go Poisson model is used per fixture when that line is incomplete, missing, or late. The selected engine, engine version, policy, and fallback reason are stored in each prediction payload. | The historical bookmaker comparison used returned-after-settlement odds and cannot establish forward availability. A sustained live sample is still required before treating the policy as evidence of a betting edge. |
+
+These findings do not resolve the provider-side assumptions listed above,
+especially the historical/live season discrepancy, refresh/quota behavior,
+odds availability timing, or provider authorization terms. They also do not
+claim that the application has been deployed or is profitable.

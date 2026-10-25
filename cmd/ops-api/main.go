@@ -33,6 +33,11 @@ func main() {
 	if !strings.HasPrefix(listen, "127.0.0.1:") && !strings.HasPrefix(listen, "localhost:") && !strings.HasPrefix(listen, "[::1]:") && strings.TrimSpace(token) == "" {
 		fatal("non-loopback operational API requires -internal-token or INTERNAL_API_TOKEN")
 	}
+	if strings.EqualFold(strings.TrimSpace(os.Getenv("APP_ENV")), "production") {
+		if err := api.ValidateProductionAuthConfig(auth); err != nil {
+			fatal(err.Error())
+		}
+	}
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 	db, err := ingest.OpenDatabase(ctx, databaseURL)
@@ -40,7 +45,7 @@ func main() {
 		fatal(err.Error())
 	}
 	defer db.Close()
-	if err := ingest.ApplyMigrations(ctx, db, migrationsDir); err != nil {
+	if err := ingest.ApplyMigrationsIfEnabled(ctx, db, migrationsDir); err != nil {
 		fatal(err.Error())
 	}
 	if strings.TrimSpace(auth.AuthorizedEmail) != "" {

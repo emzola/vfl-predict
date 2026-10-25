@@ -28,7 +28,7 @@ func main() {
 		fatal(err.Error())
 	}
 	defer db.Close()
-	if err := ingest.ApplyMigrations(ctx, db, migrationsDir); err != nil {
+	if err := ingest.ApplyMigrationsIfEnabled(ctx, db, migrationsDir); err != nil {
 		fatal(err.Error())
 	}
 	report, err := settlement.NewSettler(db).Settle(ctx, runID)

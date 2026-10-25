@@ -74,6 +74,9 @@ type predictionView struct {
 	Probability          probabilityView    `json:"probability"`
 	MostLikelyOutcome    string             `json:"most_likely_outcome"`
 	ModelVersion         string             `json:"model_version"`
+	Engine               string             `json:"engine,omitempty"`
+	EngineVersion        string             `json:"engine_version,omitempty"`
+	PredictionPolicy     string             `json:"prediction_policy,omitempty"`
 	Status               string             `json:"status"`
 	PredictionAsOf       time.Time          `json:"prediction_as_of"`
 	CutoffAt             time.Time          `json:"cutoff_at"`
@@ -93,7 +96,10 @@ type predictionView struct {
 }
 
 type predictionPayload struct {
-	Bookmaker *struct {
+	Model            string `json:"model"`
+	ModelVersion     string `json:"model_version"`
+	PredictionPolicy string `json:"prediction_policy"`
+	Bookmaker        *struct {
 		Home      float64         `json:"home"`
 		Draw      float64         `json:"draw"`
 		Away      float64         `json:"away"`
@@ -835,6 +841,9 @@ func applyPredictionPayload(item *predictionView, payload []byte) {
 	if json.Unmarshal(payload, &decoded) != nil {
 		return
 	}
+	item.Engine = decoded.Model
+	item.EngineVersion = decoded.ModelVersion
+	item.PredictionPolicy = decoded.PredictionPolicy
 	if decoded.Bookmaker != nil {
 		item.Bookmaker = &bookmakerView{
 			HomeOdds:  decoded.Bookmaker.Home,

@@ -37,8 +37,8 @@ type Config struct {
 
 func DefaultConfig() Config {
 	return Config{
-		ModelName:           "poisson",
-		PolicyVersion:       "phase3.pre_match.v1",
+		ModelName:           "bookmaker_first",
+		PolicyVersion:       "phase5.pre_match.bookmaker_first.v1",
 		SafetyBuffer:        30 * time.Second,
 		MinimumTrainingData: 1,
 		RequireVerifiedOdds: true,
@@ -80,6 +80,8 @@ type RoundReport struct {
 	FixtureCount    int       `json:"fixture_count"`
 	GeneratedCount  int       `json:"generated_count"`
 	PointInTimeOdds int       `json:"point_in_time_odds_count"`
+	BookmakerUsed   int       `json:"bookmaker_used_count"`
+	PoissonFallback int       `json:"poisson_fallback_count"`
 	Warnings        []string  `json:"warnings,omitempty"`
 	ExistingRun     bool      `json:"existing_run"`
 }
@@ -187,7 +189,7 @@ func (e *Engine) GenerateRound(ctx context.Context, seasonID string, round int, 
 	}
 	runType := string(report.Status)
 	idempotencyKey := fmt.Sprintf("prediction:%s:%d:%s:%s:%s:%s", seasonID, round, modelVersion, inputVersion, cfg.PolicyVersion, runType)
-	modelID, err := research.NewResearchStorage(e.DB).EnsureModelDefinition(ctx, cfg.ModelName, modelVersion, "Phase 3 statistical baseline prediction", map[string]any{"policy": cfg.PolicyVersion})
+	modelID, err := research.NewResearchStorage(e.DB).EnsureModelDefinition(ctx, cfg.ModelName, modelVersion, predictionModelDescription(cfg.ModelName), map[string]any{"policy": cfg.PolicyVersion})
 	if err != nil {
 		return RoundReport{}, err
 	}
@@ -240,24 +242,51 @@ RETURNING prediction_run_id::text, status, generated_fixture_count`, seasonID, r
 		clone.HomeScore = nil
 		clone.AwayScore = nil
 		clone.Odds = eligibleOdds(target.Odds, cutoff, cfg.RequireVerifiedOdds)
+		line, hasOdds := research.FindOneXTwoOddsAt(clone, cutoff)
 		probability := model.Predict(clone)
 		if err := probability.Validate(1e-8); err != nil {
 			return RoundReport{}, fmt.Errorf("model %s produced invalid probability for match %s: %w", cfg.ModelName, target.MatchID, err)
 		}
-		payload := map[string]any{
-			"probability":   probability,
-			"model":         cfg.ModelName,
-			"input_version": inputVersion,
+		selectedModel := model.Name()
+		selectedVersion := model.Version()
+		fallbackReason := ""
+		if policy, ok := model.(*research.BookmakerFirstModel); ok {
+			if hasOdds {
+				selectedModel = "bookmaker_implied"
+				selectedVersion = "phase2.v1"
+				report.BookmakerUsed++
+			} else {
+				selectedModel = "poisson"
+				if policy.Statistical != nil {
+					selectedVersion = policy.Statistical.Version()
+				}
+				fallbackReason = "no_verified_pre_cutoff_1x2_line"
+				report.PoissonFallback++
+			}
 		}
-		if poisson, ok := model.(*research.PoissonGoalModel); ok {
-			payload["secondary"] = poisson.PredictGoals(clone, 10)
+		payload := map[string]any{
+			"probability":        probability,
+			"model":              selectedModel,
+			"model_version":      selectedVersion,
+			"prediction_policy":  cfg.ModelName,
+			"input_version":      inputVersion,
+			"point_in_time_odds": hasOdds,
+		}
+		if fallbackReason != "" {
+			payload["fallback_reason"] = fallbackReason
+		}
+		switch selected := model.(type) {
+		case *research.PoissonGoalModel:
+			payload["secondary"] = selected.PredictGoals(clone, 10)
+		case *research.BookmakerFirstModel:
+			payload["secondary"] = selected.PoissonGoals(clone, 10)
+			payload["secondary_model"] = "poisson"
 		}
 		feature, featureErr := research.BuildFeatureVector(inputDataset, clone, cutoff, cfg.FeatureConfig)
 		if featureErr == nil {
 			payload["feature_values"] = feature.Values
 			payload["feature_version"] = feature.FeatureVersion
 		}
-		line, hasOdds := research.FindOneXTwoOddsAt(clone, cutoff)
 		if hasOdds {
 			pointOdds++
 		} else if cfg.ModelName == "bookmaker_implied" || cfg.ModelName == "bookmaker" {
@@ -328,6 +357,13 @@ func eligibleOdds(quotes []research.OddsQuote, cutoff time.Time, requireVerified
 	return result
 }
 
+func predictionModelDescription(modelName string) string {
+	if strings.EqualFold(strings.TrimSpace(modelName), "bookmaker_first") || strings.EqualFold(strings.TrimSpace(modelName), "market_first") || strings.EqualFold(strings.TrimSpace(modelName), "production") {
+		return "Phase 5 bookmaker-first production policy with verified pre-cutoff Poisson fallback"
+	}
+	return "Phase 3 statistical baseline prediction"
+}
+
 func nullableTime(value time.Time) string {
 	if value.IsZero() {
 		return ""
@@ -376,7 +412,7 @@ func (e *Engine) persistUnavailable(ctx context.Context, report RoundReport, cfg
 	}
 	report.ModelVersion = modelVersion
 	report.InputVersion = "unavailable"
-	modelID, err := research.NewResearchStorage(e.DB).EnsureModelDefinition(ctx, cfg.ModelName, modelVersion, "Phase 3 statistical baseline prediction", map[string]any{"policy": cfg.PolicyVersion})
+	modelID, err := research.NewResearchStorage(e.DB).EnsureModelDefinition(ctx, cfg.ModelName, modelVersion, predictionModelDescription(cfg.ModelName), map[string]any{"policy": cfg.PolicyVersion})
 	if err != nil {
 		return report, err
 	}

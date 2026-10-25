@@ -1,0 +1,287 @@
+name: phase-5-production
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+    inputs:
+      confirm_initial_deploy:
+        description: "Explicitly authorize the controlled production deployment"
+        required: true
+        type: boolean
+        default: false
+      confirm_high_risk:
+        description: "Explicitly authorize a release containing migration changes"
+        required: true
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+concurrency:
+  group: bet9ja-vfl-production-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  validate:
+    name: Validate deterministic release
+    runs-on: ubuntu-latest
+    outputs:
+      high_risk: ${{ steps.risk.outputs.high_risk }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
+        with:
+          go-version: "1.24.x"
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: "22.x"
+          cache: npm
+          cache-dependency-path: apps/web/package-lock.json
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
+        with:
+          python-version: "3.12"
+
+      - name: Go tests
+        run: go test -p 1 -count=1 ./...
+      - name: Go vet
+        run: go vet ./...
+      - name: Python contract and research tests
+        run: python -m unittest discover -s services/model/tests -p 'test_*.py'
+      - name: Python compile check
+        run: python -m compileall -q services/model
+      - name: Install frontend dependencies
+        working-directory: apps/web
+        run: npm ci
+      - name: Frontend tests
+        working-directory: apps/web
+        run: npm test
+      - name: Frontend typecheck
+        working-directory: apps/web
+        run: npm run typecheck
+      - name: OpenAPI validation
+        working-directory: apps/web
+        run: npm run openapi:validate
+      - name: Frontend production build
+        working-directory: apps/web
+        run: npm run build
+      - name: Install Chromium for deterministic browser tests
+        working-directory: apps/web
+        run: npx playwright install --with-deps chromium
+      - name: Browser E2E tests
+        working-directory: apps/web
+        run: npm run test:e2e
+      - name: Dependency security check
+        working-directory: apps/web
+        run: npm audit --audit-level=high
+
+      - name: Validate development Compose
+        env:
+          POSTGRES_PASSWORD: ci-placeholder-only
+          INTERNAL_API_TOKEN: ci-internal-placeholder
+        run: docker compose -f infra/docker/docker-compose.yml config --quiet
+      - name: Validate production Compose interpolation
+        env:
+          RELEASE_SHA: 0123456789abcdef0123456789abcdef01234567
+          GHCR_IMAGE_PREFIX: ghcr.io/example/example
+          POSTGRES_PASSWORD: ci-placeholder-only
+          INTERNAL_API_TOKEN: ci-internal-placeholder
+          AUTHORIZED_EMAIL: owner@example.test
+          RESEND_API_KEY: re_ci_placeholder
+          EMAIL_FROM: "VFL <no-reply@example.test>"
+          BET9JA_HISTORICAL_BASE_URL: https://example.test/historical
+          BET9JA_LIVE_BASE_URL: https://example.test/live
+          ACME_EMAIL: owner@example.test
+        run: docker compose --env-file infra/docker/.env.production.example -f infra/docker/docker-compose.production.yml config --quiet
+      - name: Secret-pattern regression check
+        shell: bash
+        run: |
+          if git grep -n -I -E 'BEGIN (RSA|OPENSSH|EC|DSA) PRIVATE KEY|ghp_[A-Za-z0-9]{20,}|re_[A-Za-z0-9]{30,}' -- ':!*.example' ':!docs/phase-*'; then
+            echo 'possible credential material found in tracked files' >&2
+            exit 1
+          fi
+      - name: Classify release risk
+        id: risk
+        shell: bash
+        env:
+          EVENT_BEFORE: ${{ github.event.before }}
+          CURRENT_SHA: ${{ github.sha }}
+        run: |
+          base="$EVENT_BEFORE"
+          if [ -z "$base" ] || [[ "$base" =~ ^0+$ ]]; then
+            base="$(git rev-list --max-parents=1 HEAD^ 2>/dev/null || true)"
+          fi
+          if [ -n "$base" ]; then
+            changed="$(git diff --name-only "$base" "$CURRENT_SHA")"
+          else
+            changed="$(git ls-files)"
+          fi
+          if printf '%s\n' "$changed" | grep -Eq '^db/migrations/.*\.sql$'; then
+            echo 'high_risk=true' >> "$GITHUB_OUTPUT"
+            echo 'Migration changes require explicit manual authorization.'
+          else
+            echo 'high_risk=false' >> "$GITHUB_OUTPUT"
+          fi
+
+  build:
+    name: Build and publish immutable images
+    needs: validate
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    outputs:
+      image_prefix: ${{ steps.image.outputs.prefix }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3
+      - name: Normalize GHCR image prefix
+        id: image
+        shell: bash
+        env:
+          REPOSITORY: ${{ github.repository }}
+        run: echo "prefix=ghcr.io/${REPOSITORY,,}" >> "$GITHUB_OUTPUT"
+      - name: Log in to GHCR
+        uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Build and push API image
+        id: api
+        uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6
+        with:
+          context: .
+          file: infra/docker/Dockerfile.api
+          push: true
+          tags: |
+            ${{ steps.image.outputs.prefix }}/vfl-api:${{ github.sha }}
+            ${{ steps.image.outputs.prefix }}/vfl-api:latest
+          labels: org.opencontainers.image.revision=${{ github.sha }}
+          cache-from: type=gha,scope=vfl-api
+          cache-to: type=gha,mode=max,scope=vfl-api
+      - name: Build and push worker image
+        id: worker
+        uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6
+        with:
+          context: .
+          file: infra/docker/Dockerfile.worker
+          push: true
+          tags: |
+            ${{ steps.image.outputs.prefix }}/vfl-worker:${{ github.sha }}
+            ${{ steps.image.outputs.prefix }}/vfl-worker:latest
+          labels: org.opencontainers.image.revision=${{ github.sha }}
+          cache-from: type=gha,scope=vfl-worker
+          cache-to: type=gha,mode=max,scope=vfl-worker
+      - name: Build and push web image
+        id: web
+        uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6
+        with:
+          context: apps/web
+          file: apps/web/Dockerfile
+          push: true
+          tags: |
+            ${{ steps.image.outputs.prefix }}/vfl-web:${{ github.sha }}
+            ${{ steps.image.outputs.prefix }}/vfl-web:latest
+          labels: org.opencontainers.image.revision=${{ github.sha }}
+          cache-from: type=gha,scope=vfl-web
+          cache-to: type=gha,mode=max,scope=vfl-web
+      - name: Save image digest manifest
+        shell: bash
+        run: |
+          {
+            printf 'vfl-api|%s\n' '${{ steps.api.outputs.digest }}'
+            printf 'vfl-worker|%s\n' '${{ steps.worker.outputs.digest }}'
+            printf 'vfl-web|%s\n' '${{ steps.web.outputs.digest }}'
+          } > image-digests.txt
+          test "$(wc -l < image-digests.txt)" -eq 3
+      - name: Upload release manifest
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: phase5-${{ github.sha }}
+          path: image-digests.txt
+          if-no-files-found: error
+
+  deploy:
+    name: Deploy approved release to Contabo
+    needs: [validate, build]
+    if: >-
+      github.ref == 'refs/heads/main' &&
+      needs.validate.result == 'success' &&
+      needs.build.result == 'success' &&
+      (
+        (github.event_name == 'push' && vars.PRODUCTION_DEPLOY_ENABLED == 'true') ||
+        (github.event_name == 'workflow_dispatch' && inputs.confirm_initial_deploy == true)
+      ) &&
+      (needs.validate.outputs.high_risk != 'true' || inputs.confirm_high_risk == true)
+    runs-on: ubuntu-latest
+    environment: production
+    permissions:
+      contents: read
+      packages: read
+    env:
+      PRODUCTION_HOST: ${{ secrets.PRODUCTION_HOST }}
+      PRODUCTION_SSH_USER: ${{ secrets.PRODUCTION_SSH_USER }}
+      PRODUCTION_SSH_PRIVATE_KEY: ${{ secrets.PRODUCTION_SSH_PRIVATE_KEY }}
+      PRODUCTION_KNOWN_HOSTS: ${{ secrets.PRODUCTION_KNOWN_HOSTS }}
+      PRODUCTION_APP_DIR: ${{ vars.PRODUCTION_APP_DIR || '/opt/bet9ja-vfl' }}
+      PRODUCTION_DEPLOY_SERVICES: ${{ vars.PRODUCTION_DEPLOY_SERVICES || 'api web caddy live-monitor prediction-worker settlement-worker' }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - name: Download release digest manifest
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: phase5-${{ github.sha }}
+      - name: Validate deployment inputs
+        shell: bash
+        run: |
+          test -n "$PRODUCTION_HOST"
+          test -n "$PRODUCTION_SSH_USER"
+          test -n "$PRODUCTION_SSH_PRIVATE_KEY"
+          test -n "$PRODUCTION_KNOWN_HOSTS"
+      - name: Configure verified SSH host key
+        shell: bash
+        run: |
+          install -d -m 700 "$HOME/.ssh"
+          printf '%s\n' "$PRODUCTION_KNOWN_HOSTS" > "$HOME/.ssh/known_hosts"
+          chmod 600 "$HOME/.ssh/known_hosts"
+          printf '%s\n' "$PRODUCTION_SSH_PRIVATE_KEY" > "$HOME/.ssh/id_ed25519"
+          chmod 600 "$HOME/.ssh/id_ed25519"
+          ssh-keygen -y -f "$HOME/.ssh/id_ed25519" >/dev/null
+      - name: Upload release bundle
+        shell: bash
+        run: |
+          target="$PRODUCTION_SSH_USER@$PRODUCTION_HOST"
+          release_dir="$PRODUCTION_APP_DIR/releases/${{ github.sha }}"
+          ssh -i "$HOME/.ssh/id_ed25519" -o BatchMode=yes -o StrictHostKeyChecking=yes "$target" "install -d -m 0750 '$release_dir'"
+          scp -i "$HOME/.ssh/id_ed25519" -o BatchMode=yes -o StrictHostKeyChecking=yes \
+            infra/docker/docker-compose.production.yml \
+            infra/docker/Caddyfile.production \
+            scripts/deploy-production.sh \
+            scripts/rollback-production.sh \
+            image-digests.txt \
+            "$target:$release_dir/"
+      - name: Run guarded host deployment
+        shell: bash
+        run: |
+          target="$PRODUCTION_SSH_USER@$PRODUCTION_HOST"
+          release_dir="$PRODUCTION_APP_DIR/releases/${{ github.sha }}"
+          ssh -i "$HOME/.ssh/id_ed25519" -o BatchMode=yes -o StrictHostKeyChecking=yes "$target" \
+            "chmod 0750 '$release_dir/deploy-production.sh' '$release_dir/rollback-production.sh' && APP_DIR='$PRODUCTION_APP_DIR' RELEASE_SHA='${{ github.sha }}' BUNDLE_DIR='$release_dir' DEPLOY_SERVICES='$PRODUCTION_DEPLOY_SERVICES' bash '$release_dir/deploy-production.sh'"
+
+  deployment-gate-report:
+    name: Report deployment gate
+    needs: [validate, build, deploy]
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - name: Explain skipped or completed deployment
+        shell: bash
+        run: |
+          echo "validation=${{ needs.validate.result }} build=${{ needs.build.result }} deploy=${{ needs.deploy.result }} high_risk=${{ needs.validate.outputs.high_risk }}"
+          if [ "${{ needs.deploy.result }}" = "skipped" ]; then
+            echo "Production deployment was not authorized by the configured bootstrap/high-risk gates."
+          fi

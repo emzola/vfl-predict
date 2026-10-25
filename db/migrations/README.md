@@ -47,3 +47,9 @@ scale factors on append-heavy evidence tables. It does not delete, archive,
 rewrite, partition, or compress existing rows. Use the Phase 4.2 retention
 dry-run command before proposing any cleanup, and keep a logical backup before
 any separately approved destructive operation.
+
+`011_phase5_migration_metadata.sql` extends the existing version catalog with
+the migration filename and SHA-256 checksum used by the dedicated production
+`cmd/migrate` runner. Existing Phase 0–4 rows are adopted with their current
+file checksums on the first Phase 5 run; a later change to an applied file is
+rejected. PostgreSQL advisory locking remains held for the ordered batch.

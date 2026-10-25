@@ -78,13 +78,64 @@ func ApplyMigrations(ctx context.Context, db *sql.DB, migrationsDir string) erro
 	defer func() {
 		_, _ = conn.ExecContext(context.Background(), `SELECT pg_advisory_unlock(hashtextextended('bet9ja-vfl:migrations', 0))`)
 	}()
+	if _, err := conn.ExecContext(ctx, `
+CREATE TABLE IF NOT EXISTS schema_migrations (
+    version text PRIMARY KEY,
+    migration_name text,
+    checksum_sha256 text,
+    applied_at timestamptz NOT NULL DEFAULT now()
+)`); err != nil {
+		return fmt.Errorf("create migration metadata: %w", err)
+	}
+	// Phase 0-4 databases already have the legacy version/applied_at catalog.
+	// Extend it in place and establish checksums on the first Phase 5 run; do
+	// not replay the already-applied idempotent files just to change metadata.
+	for _, column := range []string{"migration_name text", "checksum_sha256 text"} {
+		if _, err := conn.ExecContext(ctx, "ALTER TABLE schema_migrations ADD COLUMN IF NOT EXISTS "+column); err != nil {
+			return fmt.Errorf("extend migration metadata with %s: %w", column, err)
+		}
+	}
+	if _, err := conn.ExecContext(ctx, `CREATE INDEX IF NOT EXISTS schema_migrations_name_idx ON schema_migrations (migration_name)`); err != nil {
+		return fmt.Errorf("index migration metadata: %w", err)
+	}
 	for _, path := range paths {
 		contents, err := os.ReadFile(path)
 		if err != nil {
 			return fmt.Errorf("read migration %s: %w", path, err)
 		}
+		checksum := sha256.Sum256(contents)
+		checksumHex := hex.EncodeToString(checksum[:])
+		name := filepath.Base(path)
+		version := strings.TrimSuffix(name, filepath.Ext(name))
+		var appliedChecksum sql.NullString
+		err = conn.QueryRowContext(ctx, `SELECT checksum_sha256 FROM schema_migrations WHERE version = $1`, version).Scan(&appliedChecksum)
+		if err == nil {
+			if appliedChecksum.Valid && appliedChecksum.String != checksumHex {
+				return fmt.Errorf("migration %s checksum changed after application", name)
+			}
+			if !appliedChecksum.Valid {
+				if _, err := conn.ExecContext(ctx, `UPDATE schema_migrations SET migration_name = $1, checksum_sha256 = $2, applied_at = COALESCE(applied_at, now()) WHERE version = $3`, name, checksumHex, version); err != nil {
+					return fmt.Errorf("backfill migration metadata %s: %w", name, err)
+				}
+			}
+			continue
+		}
+		if !errors.Is(err, sql.ErrNoRows) {
+			return fmt.Errorf("read migration metadata %s: %w", name, err)
+		}
 		if _, err := conn.ExecContext(ctx, string(contents)); err != nil {
-			return fmt.Errorf("apply migration %s: %w", path, err)
+			return fmt.Errorf("apply migration %s: %w", name, err)
+		}
+		result, err := conn.ExecContext(ctx, `UPDATE schema_migrations SET migration_name = $1, checksum_sha256 = $2, applied_at = COALESCE(applied_at, now()) WHERE version = $3`, name, checksumHex, version)
+		if err != nil {
+			return fmt.Errorf("record migration %s: %w", name, err)
+		}
+		if count, err := result.RowsAffected(); err != nil {
+			return fmt.Errorf("inspect migration record %s: %w", name, err)
+		} else if count == 0 {
+			if _, err := conn.ExecContext(ctx, `INSERT INTO schema_migrations (version, migration_name, checksum_sha256) VALUES ($1, $2, $3)`, version, name, checksumHex); err != nil {
+				return fmt.Errorf("insert migration record %s: %w", name, err)
+			}
 		}
 	}
 	return nil

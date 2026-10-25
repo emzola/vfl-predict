@@ -20,7 +20,7 @@ func main() {
 	migrationsDir := "db/migrations"
 	seasonID := ""
 	round := 0
-	modelName := "poisson"
+	modelName := "bookmaker_first"
 	freeze := false
 	runOnce := false
 	interval := 60 * time.Second
@@ -28,7 +28,7 @@ func main() {
 	flag.StringVar(&migrationsDir, "migrations-dir", migrationsDir, "directory containing SQL migrations")
 	flag.StringVar(&seasonID, "season-id", seasonID, "season to predict; required for run-once")
 	flag.IntVar(&round, "round", round, "round to predict; required for run-once")
-	flag.StringVar(&modelName, "model", modelName, "Phase 2 baseline model name")
+	flag.StringVar(&modelName, "model", modelName, "prediction policy/model name (default: bookmaker_first)")
 	flag.BoolVar(&freeze, "freeze", freeze, "create an official frozen round prediction")
 	flag.BoolVar(&runOnce, "run-once", runOnce, "generate one round and exit")
 	flag.DurationVar(&interval, "interval", interval, "background safety-scan interval")
@@ -43,7 +43,7 @@ func main() {
 		fatal(err.Error())
 	}
 	defer db.Close()
-	if err := ingest.ApplyMigrations(ctx, db, migrationsDir); err != nil {
+	if err := ingest.ApplyMigrationsIfEnabled(ctx, db, migrationsDir); err != nil {
 		fatal(err.Error())
 	}
 	repo := ingest.NewRepository(db)

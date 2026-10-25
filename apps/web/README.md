@@ -14,6 +14,7 @@ npm test
 npm run typecheck
 npm run openapi:validate
 npm run build
+npm run test:e2e
 ```
 
 If the workstation or CI environment uses an inspected/corporate registry
@@ -36,3 +37,7 @@ tests and does not print it to logs.
 
 The frontend does not start workers or trigger upstream polling. It only reads
 stored records and requests conservative browser refreshes for mutable views.
+
+`npm run test:e2e` runs deterministic Playwright login/dashboard fixtures. It
+requires the pinned Chromium browser (`npx playwright install chromium`) and
+does not send email or contact the provider.

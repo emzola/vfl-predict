@@ -6,5 +6,23 @@ data
 tmp
 artifacts
 node_modules
+**/node_modules
+.next
+**/.next
+test-results
+**/test-results
+playwright-report
+**/playwright-report
+*.tsbuildinfo
+.codex
+.agents
+.aws
 __pycache__
 *.pyc
+Completed season results endpoint JSON response.txt
+Current season information endpoint JSON response.txt
+Historical match odds endpoint JSON response.txt
+Historical seasons list endpoint JSON response.txt
+Historical team statistics position history endpoint JSON response.txt
+Live matchday status endpoint JSON response.txt
+Upcoming matchdays endpoint JSON response.txt

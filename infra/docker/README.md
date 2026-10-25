@@ -44,6 +44,28 @@ to the private `web` service. The example is not a production deployment and
 must be combined with firewall rules, secret management, logging, and database
 backup/restore procedures.
 
+## Phase 5 production bundle
+
+`docker-compose.production.yml` is separate from the local development
+Compose file. It publishes only Caddy on ports 80 and 443, keeps PostgreSQL,
+the Go API, web server, and workers on private Docker networks, and uses the
+persistent `bet9ja-vfl-production-postgres-data` volume. It does not include
+the Python research/training service because production inference is currently
+provided by the Go statistical engine.
+
+Copy `.env.production.example` to the VPS only as a template; it contains no
+usable credentials. The real `/opt/bet9ja-vfl/.env.production` must be created
+out of band with mode 600. Use `scripts/deploy-production.sh` for deployments
+and `scripts/rollback-production.sh` for an explicitly authorized image-only
+rollback. Neither script runs `docker compose down -v` or reverses database
+migrations.
+
+The production migration service runs `cmd/migrate` once under the PostgreSQL
+advisory lock. API and worker containers set `RUN_MIGRATIONS=false`; local
+commands preserve their existing migration-on-start default. See
+`docs/phase-5-deployment.md` for the first-deployment, Cloudflare, Resend,
+GHCR, backup, firewall, and rollback procedures.
+
 ## Phase 4.2 storage policy
 
 Migration `010_phase42_storage_policy.sql` adds a retention-policy catalog and

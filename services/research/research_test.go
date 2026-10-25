@@ -205,6 +205,42 @@ func TestBaselineModelsAndPoissonDerivedProbabilities(t *testing.T) {
 	}
 }
 
+func TestBookmakerFirstUsesVerifiedMarketAndPoissonFallback(t *testing.T) {
+	dataset := syntheticDataset()
+	model := NewBookmakerFirstModel(false)
+	if err := model.Fit(dataset.Matches[:16]); err != nil {
+		t.Fatal(err)
+	}
+
+	marketMatch := dataset.Matches[20]
+	marketLine, ok := marketMatch.OddsLine(false)
+	if !ok {
+		t.Fatal("synthetic match has no verified market line")
+	}
+	marketProbability := model.Predict(marketMatch)
+	wantMarket := marketLine.ImpliedProbabilities()
+	if marketProbability != wantMarket {
+		t.Fatalf("bookmaker-first probability=%+v want=%+v", marketProbability, wantMarket)
+	}
+	if !model.UsesBookmaker(marketMatch) {
+		t.Fatal("bookmaker-first did not report market usage")
+	}
+
+	fallbackMatch := marketMatch
+	fallbackMatch.Odds = append([]OddsQuote(nil), marketMatch.Odds...)
+	for index := range fallbackMatch.Odds {
+		fallbackMatch.Odds[index].PointInTimeVerified = false
+	}
+	fallbackProbability := model.Predict(fallbackMatch)
+	wantFallback := model.Statistical.Predict(fallbackMatch)
+	if fallbackProbability != wantFallback {
+		t.Fatalf("bookmaker-first fallback=%+v want Poisson=%+v", fallbackProbability, wantFallback)
+	}
+	if model.UsesBookmaker(fallbackMatch) {
+		t.Fatal("unverified market was reported as used")
+	}
+}
+
 func TestWalkForwardBacktestIsDeterministicAndChronological(t *testing.T) {
 	dataset := syntheticDataset()
 	config := DefaultBacktestConfig()

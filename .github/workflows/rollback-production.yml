@@ -1,0 +1,54 @@
+name: rollback-production
+
+on:
+  workflow_dispatch:
+    inputs:
+      target_sha:
+        description: "Retained immutable release SHA to restore"
+        required: true
+        type: string
+      confirm_rollback:
+        description: "Confirm an image-only rollback; database migrations are not reversed"
+        required: true
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+concurrency:
+  group: bet9ja-vfl-production-rollback
+  cancel-in-progress: false
+
+jobs:
+  rollback:
+    if: inputs.confirm_rollback == true
+    runs-on: ubuntu-latest
+    environment: production
+    env:
+      PRODUCTION_HOST: ${{ secrets.PRODUCTION_HOST }}
+      PRODUCTION_SSH_USER: ${{ secrets.PRODUCTION_SSH_USER }}
+      PRODUCTION_SSH_PRIVATE_KEY: ${{ secrets.PRODUCTION_SSH_PRIVATE_KEY }}
+      PRODUCTION_KNOWN_HOSTS: ${{ secrets.PRODUCTION_KNOWN_HOSTS }}
+      PRODUCTION_APP_DIR: ${{ vars.PRODUCTION_APP_DIR || '/opt/bet9ja-vfl' }}
+    steps:
+      - name: Configure verified SSH host key
+        shell: bash
+        run: |
+          test -n "$PRODUCTION_HOST"
+          test -n "$PRODUCTION_SSH_USER"
+          test -n "$PRODUCTION_SSH_PRIVATE_KEY"
+          test -n "$PRODUCTION_KNOWN_HOSTS"
+          install -d -m 700 "$HOME/.ssh"
+          printf '%s\n' "$PRODUCTION_KNOWN_HOSTS" > "$HOME/.ssh/known_hosts"
+          printf '%s\n' "$PRODUCTION_SSH_PRIVATE_KEY" > "$HOME/.ssh/id_ed25519"
+          chmod 600 "$HOME/.ssh/known_hosts" "$HOME/.ssh/id_ed25519"
+          ssh-keygen -y -f "$HOME/.ssh/id_ed25519" >/dev/null
+      - name: Run explicit image rollback
+        shell: bash
+        env:
+          TARGET_SHA: ${{ inputs.target_sha }}
+        run: |
+          target="$PRODUCTION_SSH_USER@$PRODUCTION_HOST"
+          ssh -i "$HOME/.ssh/id_ed25519" -o BatchMode=yes -o StrictHostKeyChecking=yes "$target" \
+            "TARGET_SHA='$TARGET_SHA' CONFIRM_ROLLBACK=YES APP_DIR='$PRODUCTION_APP_DIR' bash '$PRODUCTION_APP_DIR/releases/$TARGET_SHA/rollback-production.sh'"

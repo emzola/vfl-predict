@@ -6,3 +6,8 @@ coverage
 .env
 .env.*
 !.env.example
+e2e
+playwright.config.ts
+test-results
+playwright-report
+*.tsbuildinfo

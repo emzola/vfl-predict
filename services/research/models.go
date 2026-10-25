@@ -308,6 +308,55 @@ func (m *BookmakerImpliedModel) Predict(match MatchRecord) Probability {
 	return NormalizeProbability(1, 1, 1)
 }
 
+// BookmakerFirstModel is the production prediction policy. It uses a complete
+// bookmaker 1X2 line only when the quotes satisfy the selected provenance
+// policy; otherwise it falls back to the fitted Poisson model. The engine
+// supplies target-match odds already bounded by the prediction cutoff, while
+// the strict default here still requires point-in-time verification.
+type BookmakerFirstModel struct {
+	Statistical        *PoissonGoalModel
+	AllowRetrospective bool
+}
+
+func NewBookmakerFirstModel(allowRetrospective bool) *BookmakerFirstModel {
+	return &BookmakerFirstModel{
+		Statistical:        NewPoissonGoalModel(),
+		AllowRetrospective: allowRetrospective,
+	}
+}
+
+func (m *BookmakerFirstModel) Name() string    { return "bookmaker_first" }
+func (m *BookmakerFirstModel) Version() string { return "phase5.v1" }
+
+func (m *BookmakerFirstModel) Fit(matches []MatchRecord) error {
+	if m.Statistical == nil {
+		m.Statistical = NewPoissonGoalModel()
+	}
+	return m.Statistical.Fit(matches)
+}
+
+func (m *BookmakerFirstModel) UsesBookmaker(match MatchRecord) bool {
+	_, ok := FindOneXTwoOdds(match, m.AllowRetrospective)
+	return ok
+}
+
+func (m *BookmakerFirstModel) Predict(match MatchRecord) Probability {
+	if line, ok := FindOneXTwoOdds(match, m.AllowRetrospective); ok {
+		return line.ImpliedProbabilities()
+	}
+	if m.Statistical == nil {
+		m.Statistical = NewPoissonGoalModel()
+	}
+	return m.Statistical.Predict(match)
+}
+
+func (m *BookmakerFirstModel) PoissonGoals(match MatchRecord, maxScore int) GoalPrediction {
+	if m.Statistical == nil {
+		m.Statistical = NewPoissonGoalModel()
+	}
+	return m.Statistical.PredictGoals(match, maxScore)
+}
+
 type CombinedModel struct {
 	Statistical        BaselineModel
 	BookmakerWeight    float64
@@ -361,6 +410,8 @@ func NewBaselineModel(name string, allowRetrospectiveOdds bool) (BaselineModel, 
 		return NewPoissonGoalModel(), nil
 	case "bookmaker_implied", "bookmaker":
 		return NewBookmakerImpliedModel(allowRetrospectiveOdds), nil
+	case "bookmaker_first", "market_first", "production":
+		return NewBookmakerFirstModel(allowRetrospectiveOdds), nil
 	case "statistical_bookmaker_combination", "combined":
 		return NewCombinedModel(allowRetrospectiveOdds), nil
 	default:

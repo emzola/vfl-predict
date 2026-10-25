@@ -1,0 +1,10 @@
+[Unit]
+Description=Bet9ja VFL read-only production health report
+After=docker.service
+Requires=docker.service
+
+[Service]
+Type=oneshot
+User=root
+Environment=APP_DIR=/opt/bet9ja-vfl
+ExecStart=/opt/bet9ja-vfl/scripts/production-health-report.sh

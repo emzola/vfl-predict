@@ -2,7 +2,7 @@
 
 Private, auditable Bet9ja Virtual Football League analytics platform.
 
-This checkout contains Phase 0 contract work, Phase 1 live-contract/PostgreSQL/conservative ingestion, Phase 2 deterministic research baselines, Phase 3 controlled live monitoring/prediction lifecycle, Phase 3.5 LightGBM research comparison, and the Phase 4 private authenticated dashboard boundary. It does not contain public registration, payments, or automated betting.
+This checkout contains Phase 0 contract work, Phase 1 live-contract/PostgreSQL/conservative ingestion, Phase 2 deterministic research baselines, Phase 3 controlled live monitoring/prediction lifecycle, Phase 3.5 LightGBM research comparison, the Phase 4 private authenticated dashboard boundary, and Phase 5 production deployment preparation. It does not contain public registration, payments, or automated betting.
 
 ## Repository layout
 
@@ -31,7 +31,8 @@ cmd/phase35-register/       Register checksummed research artifacts and experime
 cmd/phase35-verify/         Verify Phase 3.5 report, artifact checksums, and registry state
 packages/contracts/        JSON Schema and OpenAPI contracts
 fixtures/provider/         Seven copied owner-supplied JSON payloads
-infra/docker/              Development Compose environment
+infra/docker/              Development and production Compose environments
+infra/systemd/              Lightweight production host health timer
 db/migrations/             PostgreSQL schema migrations
 docs/                      ADRs, source findings, assumptions, and phase reports
 ```
@@ -143,6 +144,12 @@ The live monitor and historical importer share the provider client's global
 request budget. Network operation requires the explicit connectivity flag and
 keeps the ten-second minimum spacing. The operational API binds to loopback by
 default; set an internal token before using a non-loopback bind.
+
+The prediction worker defaults to the `bookmaker_first` production policy. For
+each fixture it uses normalized bookmaker-implied 1X2 probabilities only when a
+complete verified line was observed before the cutoff; otherwise it records a
+per-fixture Poisson fallback. Use `-model poisson` to explicitly run the
+statistical fallback policy.
 
 ## Phase 2 research evaluation
 

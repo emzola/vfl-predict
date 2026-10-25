@@ -33,6 +33,9 @@ export type Prediction = {
   probability: Probability;
   most_likely_outcome: string;
   model_version: string;
+  engine?: string;
+  engine_version?: string;
+  prediction_policy?: string;
   status: string;
   prediction_as_of: string;
   cutoff_at: string;

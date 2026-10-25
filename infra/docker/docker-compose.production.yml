@@ -1,0 +1,258 @@
+name: bet9ja-vfl-production
+
+x-default-logging: &default-logging
+  driver: json-file
+  options:
+    max-size: "10m"
+    max-file: "3"
+
+x-app-labels: &app-labels
+  com.bet9ja-vfl.release: "${RELEASE_SHA:?Set RELEASE_SHA to an immutable Git commit SHA}"
+  com.bet9ja-vfl.managed-by: "compose"
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-vfl}
+      POSTGRES_USER: ${POSTGRES_USER:-vfl}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in the VPS environment file}
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    expose:
+      - "5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $$POSTGRES_USER -d $$POSTGRES_DB"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 20s
+    mem_limit: 2g
+    cpus: "1.50"
+    stop_grace_period: 60s
+    logging: *default-logging
+    networks:
+      - backend
+
+  migrate:
+    image: ${GHCR_IMAGE_PREFIX:?Set GHCR_IMAGE_PREFIX, for example ghcr.io/owner/repository}/vfl-api:${RELEASE_SHA:?Set RELEASE_SHA to an immutable Git commit SHA}
+    entrypoint: ["/app/migrate"]
+    environment:
+      DATABASE_URL: postgres://${POSTGRES_USER:-vfl}:${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in the VPS environment file}@postgres:5432/${POSTGRES_DB:-vfl}?sslmode=disable
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: "no"
+    labels: *app-labels
+    mem_limit: 512m
+    cpus: "0.50"
+    logging: *default-logging
+    networks:
+      - backend
+
+  api:
+    image: ${GHCR_IMAGE_PREFIX:?Set GHCR_IMAGE_PREFIX, for example ghcr.io/owner/repository}/vfl-api:${RELEASE_SHA:?Set RELEASE_SHA to an immutable Git commit SHA}
+    restart: unless-stopped
+    command: ["-listen", "0.0.0.0:8090"]
+    environment:
+      DATABASE_URL: postgres://${POSTGRES_USER:-vfl}:${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in the VPS environment file}@postgres:5432/${POSTGRES_DB:-vfl}?sslmode=disable
+      RUN_MIGRATIONS: "false"
+      INTERNAL_API_TOKEN: ${INTERNAL_API_TOKEN:?Set INTERNAL_API_TOKEN in the VPS environment file}
+      APP_ENV: production
+      AUTHORIZED_EMAIL: ${AUTHORIZED_EMAIL:?Set AUTHORIZED_EMAIL in the VPS environment file}
+      APP_BASE_URL: https://${APP_DOMAIN:-app.vflpredict.win}
+      COOKIE_SECURE: "true"
+      MAGIC_LINK_TTL_MINUTES: ${MAGIC_LINK_TTL_MINUTES:-10}
+      SESSION_TTL_HOURS: ${SESSION_TTL_HOURS:-24}
+      AUTH_RATE_LIMIT_WINDOW_MINUTES: ${AUTH_RATE_LIMIT_WINDOW_MINUTES:-15}
+      AUTH_RATE_LIMIT_MAX: ${AUTH_RATE_LIMIT_MAX:-5}
+      MAILER_MODE: resend
+      RESEND_API_KEY: ${RESEND_API_KEY:?Set RESEND_API_KEY in the VPS environment file}
+      RESEND_API_URL: ${RESEND_API_URL:-https://api.resend.com}
+      EMAIL_FROM: ${EMAIL_FROM:?Set EMAIL_FROM to a verified Resend sender}
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+    expose:
+      - "8090"
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q -O - http://127.0.0.1:8090/healthz >/dev/null"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 10s
+    read_only: true
+    tmpfs:
+      - /tmp:noexec,nosuid,size=16m
+    security_opt:
+      - no-new-privileges:true
+    pids_limit: 128
+    mem_limit: 512m
+    cpus: "0.75"
+    stop_grace_period: 20s
+    labels: *app-labels
+    logging: *default-logging
+    networks:
+      - backend
+
+  web:
+    image: ${GHCR_IMAGE_PREFIX:?Set GHCR_IMAGE_PREFIX, for example ghcr.io/owner/repository}/vfl-web:${RELEASE_SHA:?Set RELEASE_SHA to an immutable Git commit SHA}
+    restart: unless-stopped
+    environment:
+      API_BASE_URL: http://api:8090
+      NODE_ENV: production
+    depends_on:
+      api:
+        condition: service_healthy
+    expose:
+      - "3000"
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q -O - http://127.0.0.1:3000/ >/dev/null"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 15s
+    read_only: true
+    tmpfs:
+      - /tmp:noexec,nosuid,size=32m
+    security_opt:
+      - no-new-privileges:true
+    pids_limit: 256
+    mem_limit: 768m
+    cpus: "1.00"
+    stop_grace_period: 20s
+    labels: *app-labels
+    logging: *default-logging
+    networks:
+      - backend
+
+  live-monitor:
+    image: ${GHCR_IMAGE_PREFIX:?Set GHCR_IMAGE_PREFIX, for example ghcr.io/owner/repository}/vfl-worker:${RELEASE_SHA:?Set RELEASE_SHA to an immutable Git commit SHA}
+    restart: unless-stopped
+    entrypoint: ["/app/live-monitor"]
+    command: ["-allow-network"]
+    environment:
+      DATABASE_URL: postgres://${POSTGRES_USER:-vfl}:${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in the VPS environment file}@postgres:5432/${POSTGRES_DB:-vfl}?sslmode=disable
+      RUN_MIGRATIONS: "false"
+      BET9JA_CONNECTIVITY_ENABLED: ${BET9JA_CONNECTIVITY_ENABLED:-false}
+      BET9JA_TOURNAMENT_ID: ${BET9JA_TOURNAMENT_ID:-14149}
+      BET9JA_HISTORICAL_BASE_URL: ${BET9JA_HISTORICAL_BASE_URL:?Set BET9JA_HISTORICAL_BASE_URL in the VPS environment file}
+      BET9JA_LIVE_BASE_URL: ${BET9JA_LIVE_BASE_URL:?Set BET9JA_LIVE_BASE_URL in the VPS environment file}
+      BET9JA_REQUEST_SPACING_SECONDS: ${BET9JA_REQUEST_SPACING_SECONDS:-10}
+      BET9JA_REQUEST_TIMEOUT_SECONDS: ${BET9JA_REQUEST_TIMEOUT_SECONDS:-30}
+      BET9JA_MAX_RETRIES: ${BET9JA_MAX_RETRIES:-3}
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+    read_only: true
+    tmpfs:
+      - /tmp:noexec,nosuid,size=16m
+    security_opt:
+      - no-new-privileges:true
+    pids_limit: 128
+    mem_limit: 512m
+    cpus: "0.75"
+    stop_grace_period: 30s
+    labels: *app-labels
+    logging: *default-logging
+    networks:
+      - backend
+
+  prediction-worker:
+    image: ${GHCR_IMAGE_PREFIX:?Set GHCR_IMAGE_PREFIX, for example ghcr.io/owner/repository}/vfl-worker:${RELEASE_SHA:?Set RELEASE_SHA to an immutable Git commit SHA}
+    restart: unless-stopped
+    entrypoint: ["/app/prediction-worker"]
+    command: ["-interval", "60s"]
+    environment:
+      DATABASE_URL: postgres://${POSTGRES_USER:-vfl}:${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in the VPS environment file}@postgres:5432/${POSTGRES_DB:-vfl}?sslmode=disable
+      RUN_MIGRATIONS: "false"
+      PREDICTION_SAFETY_BUFFER_SECONDS: ${PREDICTION_SAFETY_BUFFER_SECONDS:-30}
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+    read_only: true
+    tmpfs:
+      - /tmp:noexec,nosuid,size=16m
+    security_opt:
+      - no-new-privileges:true
+    pids_limit: 128
+    mem_limit: 512m
+    cpus: "0.75"
+    stop_grace_period: 30s
+    labels: *app-labels
+    logging: *default-logging
+    networks:
+      - backend
+
+  settlement-worker:
+    image: ${GHCR_IMAGE_PREFIX:?Set GHCR_IMAGE_PREFIX, for example ghcr.io/owner/repository}/vfl-worker:${RELEASE_SHA:?Set RELEASE_SHA to an immutable Git commit SHA}
+    restart: unless-stopped
+    entrypoint: ["/app/settlement-worker"]
+    command: ["-interval", "60s"]
+    environment:
+      DATABASE_URL: postgres://${POSTGRES_USER:-vfl}:${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in the VPS environment file}@postgres:5432/${POSTGRES_DB:-vfl}?sslmode=disable
+      RUN_MIGRATIONS: "false"
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+    read_only: true
+    tmpfs:
+      - /tmp:noexec,nosuid,size=16m
+    security_opt:
+      - no-new-privileges:true
+    pids_limit: 128
+    mem_limit: 384m
+    cpus: "0.50"
+    stop_grace_period: 30s
+    labels: *app-labels
+    logging: *default-logging
+    networks:
+      - backend
+
+  caddy:
+    image: caddy:2-alpine
+    restart: unless-stopped
+    environment:
+      APP_DOMAIN: ${APP_DOMAIN:-app.vflpredict.win}
+      ACME_EMAIL: ${ACME_EMAIL:?Set ACME_EMAIL for Caddy certificate notifications}
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./Caddyfile.production:/etc/caddy/Caddyfile:ro
+      - caddy-data:/data
+      - caddy-config:/config
+    depends_on:
+      web:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "caddy", "validate", "--config", "/etc/caddy/Caddyfile"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+    security_opt:
+      - no-new-privileges:true
+    pids_limit: 256
+    mem_limit: 256m
+    cpus: "0.50"
+    stop_grace_period: 20s
+    labels: *app-labels
+    logging: *default-logging
+    networks:
+      - edge
+      - backend
+
+networks:
+  edge:
+    driver: bridge
+  backend:
+    driver: bridge
+
+volumes:
+  postgres-data:
+    name: bet9ja-vfl-production-postgres-data
+  caddy-data:
+    name: bet9ja-vfl-production-caddy-data
+  caddy-config:
+    name: bet9ja-vfl-production-caddy-config

@@ -1,0 +1,5 @@
+# CI-generated release manifest. Do not hand-edit a production manifest.
+# image-name|sha256:digest
+vfl-api|sha256:REPLACE_WITH_CI_DIGEST
+vfl-worker|sha256:REPLACE_WITH_CI_DIGEST
+vfl-web|sha256:REPLACE_WITH_CI_DIGEST
