@@ -222,11 +222,8 @@ func (s *Server) overviewAPI(w http.ResponseWriter, r *http.Request) {
 			writeServerError(w, "could not load current round")
 			return
 		}
+		result.CurrentRound = nextUpcomingRound(rounds, s.now())
 		for index := range rounds {
-			if result.CurrentRound == nil && rounds[index].State != "settled" {
-				copyRound := rounds[index]
-				result.CurrentRound = &copyRound
-			}
 			if rounds[index].State == "settled" {
 				copyRound := rounds[index]
 				result.LatestSettledRound = &copyRound
@@ -716,6 +713,23 @@ func (s *Server) loadRounds(r *http.Request, seasonID string) ([]roundView, erro
 		result = append(result, item)
 	}
 	return result, rows.Err()
+}
+
+// nextUpcomingRound mirrors the prediction worker's selection rule: an
+// in-progress round is not a valid target for a new prediction run. The
+// caller supplies rounds ordered by round number, so the first eligible round
+// is the next round after the currently playing round.
+func nextUpcomingRound(rounds []roundView, now time.Time) *roundView {
+	for index := range rounds {
+		item := rounds[index]
+		if item.State == "settled" || item.EarliestKickoffAt == nil {
+			continue
+		}
+		if !item.EarliestKickoffAt.Before(now) {
+			return &item
+		}
+	}
+	return nil
 }
 
 func (s *Server) loadFixtures(r *http.Request, seasonID string, round int, upcomingOnly bool) ([]fixtureView, error) {

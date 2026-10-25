@@ -165,7 +165,11 @@ func (s *Server) current(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	_ = s.DB.QueryRowContext(r.Context(), `
-SELECT round_no FROM round_states WHERE season_id = $1 AND state NOT IN ('settled') ORDER BY earliest_kickoff_at LIMIT 1`, result.SeasonID).Scan(&round)
+SELECT round_no FROM round_states
+WHERE season_id = $1
+  AND state NOT IN ('settled')
+  AND earliest_kickoff_at >= now()
+ORDER BY earliest_kickoff_at LIMIT 1`, result.SeasonID).Scan(&round)
 	if round.Valid {
 		result.Round = round.Int64
 	}
