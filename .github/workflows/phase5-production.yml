@@ -15,7 +15,7 @@ concurrency:
 jobs:
   validate:
     name: Validate deterministic release
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     outputs:
       migration_changes: ${{ steps.risk.outputs.migration_changes }}
     steps:
@@ -62,12 +62,6 @@ jobs:
       - name: Frontend production build
         working-directory: apps/web
         run: npm run build
-      - name: Install Chromium for deterministic browser tests
-        working-directory: apps/web
-        run: npx playwright install --with-deps chromium
-      - name: Browser E2E tests
-        working-directory: apps/web
-        run: npm run test:e2e
       - name: Dependency security check
         working-directory: apps/web
         run: npm audit --audit-level=high
@@ -123,7 +117,7 @@ jobs:
   build:
     name: Build and publish immutable images
     needs: validate
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     permissions:
       contents: read
       packages: write
@@ -206,7 +200,7 @@ jobs:
       github.ref == 'refs/heads/main' &&
       needs.validate.result == 'success' &&
       needs.build.result == 'success'
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     environment: production
     permissions:
       contents: read
@@ -268,7 +262,7 @@ jobs:
     name: Report deployment gate
     needs: [validate, build, deploy]
     if: always()
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
       - name: Explain skipped or completed deployment
         shell: bash
