@@ -39,6 +39,120 @@ type ModelExperimentRegistration struct {
 	CodeVersion        string
 }
 
+// SaveDynamicCheckpoint records the deterministic state used by a Phase 6
+// prediction run. It is safe to call repeatedly for the same input fingerprint
+// and never overwrites an existing checkpoint.
+func (s *ResearchStorage) SaveDynamicCheckpoint(ctx context.Context, modelDefinitionID int64, seasonID string, round int, cutoff time.Time, inputVersion string, model *DynamicBayesianModel, provenance any) (string, error) {
+	if s == nil || s.DB == nil {
+		return "", fmt.Errorf("research storage database is nil")
+	}
+	if modelDefinitionID <= 0 || strings.TrimSpace(seasonID) == "" || round < 1 || round > 30 || cutoff.IsZero() || strings.TrimSpace(inputVersion) == "" || model == nil {
+		return "", fmt.Errorf("invalid dynamic model checkpoint input")
+	}
+	state, err := jsonValue(map[string]any{
+		"parameters":       model.Parameters(),
+		"league_intercept": model.LeagueIntercept,
+		"home_advantage":   model.HomeAdvantage,
+		"current_season":   model.CurrentSeason,
+		"last_match_at":    model.LastMatchAt,
+		"total_matches":    model.TotalMatches,
+		"season_matches":   model.SeasonMatches,
+		"states":           model.StateSnapshot(),
+	})
+	if err != nil {
+		return "", err
+	}
+	provenanceJSON, err := jsonValue(provenance)
+	if err != nil {
+		return "", err
+	}
+	var checkpointID string
+	err = s.DB.QueryRowContext(ctx, `
+INSERT INTO dynamic_model_checkpoints (
+    model_definition_id, season_id, round_no, cutoff_at, input_dataset_version,
+    state, provenance
+) VALUES ($1, $2, $3, $4, $5, $6::jsonb, $7::jsonb)
+ON CONFLICT (model_definition_id, season_id, round_no, input_dataset_version) DO NOTHING
+RETURNING checkpoint_id::text`, modelDefinitionID, seasonID, round, cutoff.UTC(), inputVersion, state, provenanceJSON).Scan(&checkpointID)
+	if err == sql.ErrNoRows {
+		err = s.DB.QueryRowContext(ctx, `
+SELECT checkpoint_id::text
+FROM dynamic_model_checkpoints
+WHERE model_definition_id = $1 AND season_id = $2 AND round_no = $3 AND input_dataset_version = $4`, modelDefinitionID, seasonID, round, inputVersion).Scan(&checkpointID)
+	}
+	if err != nil {
+		return "", fmt.Errorf("save dynamic model checkpoint: %w", err)
+	}
+	return checkpointID, nil
+}
+
+// SelectProductionArtifact is the explicit Phase 6 promotion gate. Only an
+// approved or already-active artifact can become the singleton production
+// selection; the previous selection is retired atomically.
+func (s *ResearchStorage) SelectProductionArtifact(ctx context.Context, artifactID, selectedBy, reason string, metadata any) error {
+	if s == nil || s.DB == nil {
+		return fmt.Errorf("research storage database is nil")
+	}
+	if strings.TrimSpace(artifactID) == "" || strings.TrimSpace(selectedBy) == "" || strings.TrimSpace(reason) == "" {
+		return fmt.Errorf("artifact, selected_by, and reason are required")
+	}
+	metadataJSON, err := jsonValue(metadata)
+	if err != nil {
+		return err
+	}
+	tx, err := s.DB.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("begin production model selection: %w", err)
+	}
+	defer func() { _ = tx.Rollback() }()
+	var modelKey, modelVersion, promotionStatus string
+	if err := tx.QueryRowContext(ctx, `
+SELECT m.model_key, m.version, a.promotion_status
+FROM model_artifacts a
+JOIN model_definitions m ON m.model_definition_id = a.model_definition_id
+WHERE a.model_artifact_id = $1::uuid
+FOR UPDATE`, artifactID).Scan(&modelKey, &modelVersion, &promotionStatus); err != nil {
+		return fmt.Errorf("load production candidate: %w", err)
+	}
+	if promotionStatus != "approved" && promotionStatus != "active" {
+		return fmt.Errorf("artifact must be approved before production selection; current status=%s", promotionStatus)
+	}
+	if promotionStatus == "approved" {
+		if _, err := tx.ExecContext(ctx, `
+UPDATE model_artifacts
+SET promotion_status = 'active', approved_at = COALESCE(approved_at, now())
+WHERE model_artifact_id = $1::uuid`, artifactID); err != nil {
+			return fmt.Errorf("activate production artifact: %w", err)
+		}
+	}
+	var previous string
+	if err := tx.QueryRowContext(ctx, `SELECT model_artifact_id::text FROM production_model_selection WHERE selection_key = 'production' FOR UPDATE`).Scan(&previous); err != nil && err != sql.ErrNoRows {
+		return fmt.Errorf("load previous production selection: %w", err)
+	}
+	if previous != "" && previous != artifactID {
+		if _, err := tx.ExecContext(ctx, `UPDATE model_artifacts SET promotion_status = 'retired', retired_at = COALESCE(retired_at, now()) WHERE model_artifact_id = $1::uuid AND promotion_status = 'active'`, previous); err != nil {
+			return fmt.Errorf("retire previous production artifact: %w", err)
+		}
+	}
+	if _, err := tx.ExecContext(ctx, `
+INSERT INTO production_model_selection (selection_key, model_artifact_id, model_key, model_version, selected_at, selected_by, reason, metadata)
+VALUES ('production', $1::uuid, $2, $3, $4, $5, $6, $7::jsonb)
+ON CONFLICT (selection_key) DO UPDATE SET
+    model_artifact_id = EXCLUDED.model_artifact_id,
+    model_key = EXCLUDED.model_key,
+    model_version = EXCLUDED.model_version,
+    selected_at = EXCLUDED.selected_at,
+    selected_by = EXCLUDED.selected_by,
+    reason = EXCLUDED.reason,
+    metadata = EXCLUDED.metadata`, artifactID, modelKey, modelVersion, s.now(), selectedBy, reason, metadataJSON); err != nil {
+		return fmt.Errorf("write production model selection: %w", err)
+	}
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("commit production model selection: %w", err)
+	}
+	return nil
+}
+
 func (s *ResearchStorage) RegisterModelArtifact(ctx context.Context, registration ModelArtifactRegistration) (string, error) {
 	if s == nil || s.DB == nil {
 		return "", fmt.Errorf("research storage database is nil")
@@ -184,6 +298,49 @@ WHERE model_artifact_id = $1::uuid`, artifactID, status, approvedAt, retiredAt);
 	return nil
 }
 
+// ApproveModelArtifact records the human approval metadata for a Phase 6
+// candidate. It deliberately accepts only the dynamic Bayesian candidate and
+// never selects it for production; SelectProductionArtifact remains a
+// separate explicit action.
+func (s *ResearchStorage) ApproveModelArtifact(ctx context.Context, artifactID, approvedBy, reason string) error {
+	if s == nil || s.DB == nil {
+		return fmt.Errorf("research storage database is nil")
+	}
+	if strings.TrimSpace(artifactID) == "" || strings.TrimSpace(approvedBy) == "" || strings.TrimSpace(reason) == "" {
+		return fmt.Errorf("artifact, approved_by, and reason are required")
+	}
+	tx, err := s.DB.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("begin artifact approval: %w", err)
+	}
+	defer func() { _ = tx.Rollback() }()
+	var modelKey, version, algorithm, status string
+	if err := tx.QueryRowContext(ctx, `
+SELECT m.model_key, m.version, a.algorithm, a.promotion_status
+FROM model_artifacts a
+JOIN model_definitions m ON m.model_definition_id = a.model_definition_id
+WHERE a.model_artifact_id = $1::uuid
+FOR UPDATE`, artifactID).Scan(&modelKey, &version, &algorithm, &status); err != nil {
+		return fmt.Errorf("load approval candidate: %w", err)
+	}
+	if modelKey != DynamicBayesianModelName || version != DynamicBayesianModelVersion || algorithm != "dynamic_bayesian" {
+		return fmt.Errorf("artifact is not the Phase 6 dynamic Bayesian candidate")
+	}
+	if status != "candidate" {
+		return fmt.Errorf("artifact must be candidate before approval; current status=%s", status)
+	}
+	if _, err := tx.ExecContext(ctx, `
+UPDATE model_artifacts
+SET promotion_status = 'approved', approved_at = now(), approved_by = $2, approval_reason = $3
+WHERE model_artifact_id = $1::uuid`, artifactID, approvedBy, reason); err != nil {
+		return fmt.Errorf("approve model artifact: %w", err)
+	}
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("commit artifact approval: %w", err)
+	}
+	return nil
+}
+
 func validateArtifactRegistration(registration ModelArtifactRegistration) error {
 	for label, value := range map[string]string{
 		"model key":              registration.ModelKey,
@@ -198,7 +355,7 @@ func validateArtifactRegistration(registration ModelArtifactRegistration) error 
 			return fmt.Errorf("%s is required", label)
 		}
 	}
-	if registration.Algorithm != "baseline" && registration.Algorithm != "lightgbm" {
+	if registration.Algorithm != "baseline" && registration.Algorithm != "lightgbm" && registration.Algorithm != "dynamic_bayesian" {
 		return fmt.Errorf("invalid artifact algorithm %q", registration.Algorithm)
 	}
 	if len(registration.ArtifactSHA256) != 64 || len(registration.DatasetFingerprint) != 64 {

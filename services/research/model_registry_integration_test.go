@@ -29,7 +29,7 @@ func TestPhase35ModelRegistryIntegration(t *testing.T) {
 	if err := ingest.ApplyMigrations(ctx, db, "../../db/migrations"); err != nil {
 		t.Fatal(err)
 	}
-	for _, table := range []string{"model_artifacts", "model_experiments"} {
+	for _, table := range []string{"model_artifacts", "model_experiments", "dynamic_model_checkpoints", "prediction_shadow_runs", "prediction_shadow_revisions", "production_model_selection"} {
 		var exists bool
 		if err := db.QueryRowContext(ctx, `
 SELECT EXISTS (

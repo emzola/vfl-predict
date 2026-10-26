@@ -1,6 +1,6 @@
 import Link from "next/link";
 import { formatDate, percentage } from "../lib/api";
-import type { SecondaryGoalPrediction } from "../lib/types";
+import type { DynamicTeamStrength, SecondaryGoalPrediction } from "../lib/types";
 
 export function PageHeading({ eyebrow, title, description, action }: { eyebrow: string; title: string; description?: string; action?: React.ReactNode }) {
   return (
@@ -61,6 +61,7 @@ function SecondaryProbability({ label, value }: { label: string; value?: number 
 
 export function SecondaryGoalMarkets({ secondary, model }: { secondary?: SecondaryGoalPrediction; model?: string }) {
   if (!secondary) return null;
+  const dynamicTeamStrength = secondary.dynamic_team_strength;
   const probabilities = [
     ["Over 2.5 goals", secondary.over_2_5],
     ["Under 2.5 goals", secondary.under_2_5],
@@ -74,7 +75,29 @@ export function SecondaryGoalMarkets({ secondary, model }: { secondary?: Seconda
   const hasExpectedGoals = Number.isFinite(secondary.lambda_home) && Number.isFinite(secondary.lambda_away);
   if (availableProbabilities.length === 0 && correctScores.length === 0 && !hasExpectedGoals) return null;
   const modelLabel = model === "poisson" ? "Poisson goal model" : model || "Goal model";
-  return <div className="mt-5 rounded-xl border border-slate-800 bg-slate-950/30 p-3 text-xs"><div className="flex flex-wrap items-center justify-between gap-2"><p className="eyebrow">Secondary goal markets</p><span className="text-slate-500">{modelLabel}</span></div>{availableProbabilities.length > 0 && <div className="mt-3 grid gap-2 sm:grid-cols-2">{availableProbabilities.map(([label, value]) => <SecondaryProbability key={label} label={label} value={value} />)}</div>}{hasExpectedGoals && <p className="mt-3 text-slate-500">Expected goals: {secondary.lambda_home?.toFixed(2)} home · {secondary.lambda_away?.toFixed(2)} away</p>}{correctScores.length > 0 && <div className="mt-3 border-t border-slate-800 pt-3"><p className="text-slate-500">Top correct scores</p><div className="mt-2 flex flex-wrap gap-x-4 gap-y-1 text-slate-300">{correctScores.map(([score, value]) => <span key={score}>{score} {percentage(value)}</span>)}</div></div>}<p className="mt-3 text-[11px] leading-5 text-slate-600">Model-derived probabilities; these are not bookmaker Over/Under prices.</p></div>;
+  return <div className="mt-5 rounded-xl border border-slate-800 bg-slate-950/30 p-3 text-xs"><div className="flex flex-wrap items-center justify-between gap-2"><p className="eyebrow">Secondary goal markets</p><span className="text-slate-500">{modelLabel}</span></div>{availableProbabilities.length > 0 && <div className="mt-3 grid gap-2 sm:grid-cols-2">{availableProbabilities.map(([label, value]) => <SecondaryProbability key={label} label={label} value={value} />)}</div>}{hasExpectedGoals && <p className="mt-3 text-slate-500">Expected goals: {secondary.lambda_home?.toFixed(2)} home · {secondary.lambda_away?.toFixed(2)} away</p>}{correctScores.length > 0 && <div className="mt-3 border-t border-slate-800 pt-3"><p className="text-slate-500">Top correct scores</p><div className="mt-2 flex flex-wrap gap-x-4 gap-y-1 text-slate-300">{correctScores.map(([score, value]) => <span key={score}>{score} {percentage(value)}</span>)}</div></div>}<p className="mt-3 text-[11px] leading-5 text-slate-600">Model-derived probabilities; these are not bookmaker Over/Under prices.</p>{dynamicTeamStrength && <DynamicTeamStrengthPanel diagnostics={dynamicTeamStrength} />}</div>;
+}
+
+function strengthValue(value: number | undefined) {
+  return typeof value === "number" && Number.isFinite(value) ? value.toFixed(2) : "—";
+}
+
+export function DynamicTeamStrengthPanel({ diagnostics }: { diagnostics?: DynamicTeamStrength }) {
+  if (!diagnostics) return null;
+  return <div className="mt-5 rounded-xl border border-accent/20 bg-accent/5 p-3 text-xs">
+    <div className="flex flex-wrap items-center justify-between gap-2">
+      <p className="eyebrow">Dynamic team state</p>
+      <span className="text-slate-500">{diagnostics.total_matches_used} completed matches used</span>
+    </div>
+    <div className="mt-3 grid gap-2 sm:grid-cols-2">
+      <div className="rounded-lg bg-slate-950/30 p-3"><p className="text-slate-500">Home rating</p><p className="mt-1 font-semibold text-white">{strengthValue(diagnostics.home_rating)} <span className="font-normal text-slate-500">± {strengthValue(diagnostics.home_rating_uncertainty)}</span></p></div>
+      <div className="rounded-lg bg-slate-950/30 p-3"><p className="text-slate-500">Away rating</p><p className="mt-1 font-semibold text-white">{strengthValue(diagnostics.away_rating)} <span className="font-normal text-slate-500">± {strengthValue(diagnostics.away_rating_uncertainty)}</span></p></div>
+      <div className="rounded-lg bg-slate-950/30 p-3"><p className="text-slate-500">Home attack / defense</p><p className="mt-1 text-slate-200">{strengthValue(diagnostics.home_attack_strength)} / {strengthValue(diagnostics.home_defense_strength)}</p></div>
+      <div className="rounded-lg bg-slate-950/30 p-3"><p className="text-slate-500">Away attack / defense</p><p className="mt-1 text-slate-200">{strengthValue(diagnostics.away_attack_strength)} / {strengthValue(diagnostics.away_defense_strength)}</p></div>
+    </div>
+    <p className="mt-3 text-slate-500">Expected goals: {strengthValue(diagnostics.expected_home_goals)} home · {strengthValue(diagnostics.expected_away_goals)} away. State is descriptive; all markets come from the same scoreline model.</p>
+    {diagnostics.state_as_of && <p className="mt-1 text-[11px] text-slate-600">State as of {formatDate(diagnostics.state_as_of)}</p>}
+  </div>;
 }
 
 export function FixtureLabel({ matchId, home, away, kickoff }: { matchId: number; home: string; away: string; kickoff: string }) {

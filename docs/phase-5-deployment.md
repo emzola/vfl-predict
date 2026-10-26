@@ -14,11 +14,11 @@ runner remain private. The workers do not depend on a browser session.
 ```
 
 The Python service is not included in the production Compose file because the
-production prediction worker currently uses the Go `bookmaker_first` policy:
-it uses normalized bookmaker-implied 1X2 probabilities when a complete,
-point-in-time-verified line was observed before the prediction cutoff, and
-falls back to the fitted Go Poisson goal model when that line is unavailable.
-LightGBM remains a research/training path and is not scheduled on the VPS.
+Phase 6 candidate remains a Go implementation. The automatic production gate
+uses the unified `dynamic_bayesian_team_strength` scoreline model only after a
+successful chronological replay, pre-cutoff shadow round, registry approval,
+and locked worker restart. LightGBM remains a research/training path and is not
+scheduled on the VPS.
 
 The production Compose configuration runs the Go prediction worker in
 `-auto-freeze` mode. It refreshes provisional predictions for the next
@@ -36,6 +36,8 @@ settled run exists, the worker advances to the next round.
 - `infra/docker/Dockerfile.worker` builds the independent Go workers.
 - `scripts/deploy-production.sh` performs a locked, digest-checked deployment.
 - `scripts/rollback-production.sh` performs an explicitly authorized image-only rollback.
+- `scripts/auto-promote-phase6-production.sh` runs the Phase 6 replay, shadow, registry approval, and promotion gates after a successful `main` deployment.
+- `scripts/promote-phase6-production.sh` performs the final locked model-policy switch and restarts only the prediction worker.
 - `scripts/bootstrap-vps.sh` prepares a host without creating credentials or changing DNS.
 - `.github/workflows/phase5-production.yml` validates, builds, publishes, and conditionally deploys.
 - `.github/workflows/rollback-production.yml` provides a manual rollback gate.

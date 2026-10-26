@@ -165,7 +165,10 @@ func (e *Engine) GenerateRound(ctx context.Context, seasonID string, round int, 
 			asOfMatches = append(asOfMatches, clone)
 		}
 	}
-	if len(training) < cfg.MinimumTrainingData {
+	// The dynamic Bayesian candidate has a regularized prior and can produce a
+	// valid early-season distribution even when there are no completed matches
+	// yet. Other policies retain the existing minimum-training-data guard.
+	if len(training) < cfg.MinimumTrainingData && cfg.ModelName != research.DynamicBayesianModelName {
 		report.Status = StatusUnavailable
 		report.Warnings = append(report.Warnings, fmt.Sprintf("only %d eligible historical matches; need %d", len(training), cfg.MinimumTrainingData))
 		return e.persistUnavailable(ctx, report, cfg, "insufficient_training_data")
@@ -180,6 +183,9 @@ func (e *Engine) GenerateRound(ctx context.Context, seasonID string, round int, 
 	if err := model.Fit(training); err != nil {
 		return RoundReport{}, fmt.Errorf("fit %s: %w", cfg.ModelName, err)
 	}
+	if dynamic, ok := model.(*research.DynamicBayesianModel); ok {
+		dynamic.PrepareSeason(provider.SeasonID(seasonID))
+	}
 	modelVersion := model.Version()
 	report.ModelVersion = modelVersion
 	if freeze {
@@ -189,9 +195,22 @@ func (e *Engine) GenerateRound(ctx context.Context, seasonID string, round int, 
 	}
 	runType := string(report.Status)
 	idempotencyKey := fmt.Sprintf("prediction:%s:%d:%s:%s:%s:%s", seasonID, round, modelVersion, inputVersion, cfg.PolicyVersion, runType)
-	modelID, err := research.NewResearchStorage(e.DB).EnsureModelDefinition(ctx, cfg.ModelName, modelVersion, predictionModelDescription(cfg.ModelName), map[string]any{"policy": cfg.PolicyVersion})
+	modelParameters := map[string]any{"policy": cfg.PolicyVersion}
+	if dynamic, ok := model.(*research.DynamicBayesianModel); ok {
+		modelParameters["phase6"] = dynamic.Parameters()
+	}
+	modelID, err := research.NewResearchStorage(e.DB).EnsureModelDefinition(ctx, cfg.ModelName, modelVersion, predictionModelDescription(cfg.ModelName), modelParameters)
 	if err != nil {
 		return RoundReport{}, err
+	}
+	if dynamic, ok := model.(*research.DynamicBayesianModel); ok {
+		if _, err := research.NewResearchStorage(e.DB).SaveDynamicCheckpoint(ctx, modelID, seasonID, round, cutoff, inputVersion, dynamic, map[string]any{
+			"prediction_policy": cfg.PolicyVersion,
+			"model_version":     modelVersion,
+			"prediction_as_of":  now,
+		}); err != nil {
+			return RoundReport{}, err
+		}
 	}
 	for index := range targets {
 		clone := targets[index]
@@ -282,6 +301,10 @@ RETURNING prediction_run_id::text, status, generated_fixture_count`, seasonID, r
 		case *research.BookmakerFirstModel:
 			payload["secondary"] = selected.PoissonGoals(clone, 10)
 			payload["secondary_model"] = "poisson"
+		case *research.DynamicBayesianModel:
+			payload["secondary"] = selected.PredictGoals(clone, selected.Config.MaxScore)
+			payload["secondary_model"] = research.DynamicBayesianModelName
+			payload["dynamic_team_strength"] = selected.Diagnostics(clone)
 		}
 		feature, featureErr := research.BuildFeatureVector(inputDataset, clone, cutoff, cfg.FeatureConfig)
 		if featureErr == nil {
@@ -359,6 +382,9 @@ func eligibleOdds(quotes []research.OddsQuote, cutoff time.Time, requireVerified
 }
 
 func predictionModelDescription(modelName string) string {
+	if strings.EqualFold(strings.TrimSpace(modelName), research.DynamicBayesianModelName) || strings.EqualFold(strings.TrimSpace(modelName), "dynamic_bayesian") || strings.EqualFold(strings.TrimSpace(modelName), "phase6") {
+		return "Phase 6 unified dynamic opponent-adjusted rating and regularized Bayesian attack/defense scoreline model"
+	}
 	if strings.EqualFold(strings.TrimSpace(modelName), "bookmaker_first") || strings.EqualFold(strings.TrimSpace(modelName), "market_first") || strings.EqualFold(strings.TrimSpace(modelName), "production") {
 		return "Phase 5 bookmaker-first production policy with verified pre-cutoff Poisson fallback"
 	}

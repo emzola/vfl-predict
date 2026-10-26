@@ -130,6 +130,9 @@ func RunBacktest(dataset Dataset, config BacktestConfig) (BacktestResult, error)
 				if err := model.Fit(training); err != nil {
 					return BacktestResult{}, fmt.Errorf("fit %s at %s: %w", modelName, cutoff.Format(time.RFC3339), err)
 				}
+				if dynamic, ok := model.(*DynamicBayesianModel); ok {
+					dynamic.PrepareSeason(season.ID)
+				}
 				models[modelName] = model
 			}
 			for _, target := range roundTargets {

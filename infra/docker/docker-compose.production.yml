@@ -168,6 +168,7 @@ services:
     environment:
       DATABASE_URL: postgres://${POSTGRES_USER:-vfl}:${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in the VPS environment file}@postgres:5432/${POSTGRES_DB:-vfl}?sslmode=disable
       RUN_MIGRATIONS: "false"
+      PREDICTION_MODEL: ${PREDICTION_MODEL:-bookmaker_first}
       PREDICTION_SAFETY_BUFFER_SECONDS: ${PREDICTION_SAFETY_BUFFER_SECONDS:-30}
       PREDICTION_FREEZE_LEAD_SECONDS: ${PREDICTION_FREEZE_LEAD_SECONDS:-90}
     depends_on:

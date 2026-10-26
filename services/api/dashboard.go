@@ -90,6 +90,7 @@ type predictionView struct {
 	Bookmaker            *bookmakerView     `json:"bookmaker,omitempty"`
 	Secondary            map[string]any     `json:"secondary,omitempty"`
 	SecondaryModel       string             `json:"secondary_model,omitempty"`
+	DynamicTeamStrength  map[string]any     `json:"dynamic_team_strength,omitempty"`
 	FeatureValues        map[string]float64 `json:"feature_values,omitempty"`
 	ActualOutcome        string             `json:"actual_outcome,omitempty"`
 	Correct              *bool              `json:"correct,omitempty"`
@@ -107,9 +108,10 @@ type predictionPayload struct {
 		Implied   probabilityView `json:"implied"`
 		Overround float64         `json:"overround"`
 	} `json:"bookmaker"`
-	Secondary      map[string]any     `json:"secondary"`
-	SecondaryModel string             `json:"secondary_model"`
-	FeatureValues  map[string]float64 `json:"feature_values"`
+	Secondary           map[string]any     `json:"secondary"`
+	SecondaryModel      string             `json:"secondary_model"`
+	DynamicTeamStrength map[string]any     `json:"dynamic_team_strength"`
+	FeatureValues       map[string]float64 `json:"feature_values"`
 }
 
 type predictionPage struct {
@@ -885,6 +887,13 @@ func applyPredictionPayload(item *predictionView, payload []byte) {
 	}
 	item.Secondary = decoded.Secondary
 	item.SecondaryModel = decoded.SecondaryModel
+	item.DynamicTeamStrength = decoded.DynamicTeamStrength
+	if item.DynamicTeamStrength != nil {
+		if item.Secondary == nil {
+			item.Secondary = make(map[string]any)
+		}
+		item.Secondary["dynamic_team_strength"] = item.DynamicTeamStrength
+	}
 	item.FeatureValues = decoded.FeatureValues
 }
 
@@ -1100,7 +1109,27 @@ WHERE run.run_type = 'frozen'`
 func (s *Server) loadActiveModel(r *http.Request) (map[string]any, error) {
 	var id, key, version, status string
 	var created time.Time
-	err := s.DB.QueryRowContext(r.Context(), "SELECT a.model_artifact_id::text, m.model_key, m.version, a.promotion_status, a.created_at FROM model_artifacts a JOIN model_definitions m ON m.model_definition_id = a.model_definition_id WHERE a.promotion_status = 'active' ORDER BY a.created_at DESC LIMIT 1").Scan(&id, &key, &version, &status, &created)
+	var selectedAt time.Time
+	var selectedBy, reason string
+	err := s.DB.QueryRowContext(r.Context(), `
+SELECT a.model_artifact_id::text, m.model_key, m.version, a.promotion_status,
+       a.created_at, p.selected_at, p.selected_by, p.reason
+FROM production_model_selection p
+JOIN model_artifacts a ON a.model_artifact_id = p.model_artifact_id
+JOIN model_definitions m ON m.model_definition_id = a.model_definition_id
+WHERE p.selection_key = 'production'`).Scan(&id, &key, &version, &status, &created, &selectedAt, &selectedBy, &reason)
+	if err == nil {
+		return map[string]any{
+			"artifact_id": id, "model_key": key, "version": version,
+			"promotion_status": status, "created_at": created.UTC(),
+			"selected_at": selectedAt.UTC(), "selected_by": selectedBy,
+			"selection_reason": reason,
+		}, nil
+	}
+	if err != sql.ErrNoRows && !strings.Contains(strings.ToLower(err.Error()), "production_model_selection") {
+		return nil, err
+	}
+	err = s.DB.QueryRowContext(r.Context(), "SELECT a.model_artifact_id::text, m.model_key, m.version, a.promotion_status, a.created_at FROM model_artifacts a JOIN model_definitions m ON m.model_definition_id = a.model_definition_id WHERE a.promotion_status = 'active' ORDER BY a.created_at DESC LIMIT 1").Scan(&id, &key, &version, &status, &created)
 	if err == sql.ErrNoRows {
 		return nil, nil
 	}

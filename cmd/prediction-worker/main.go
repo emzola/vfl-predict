@@ -22,7 +22,10 @@ func main() {
 	migrationsDir := "db/migrations"
 	seasonID := ""
 	round := 0
-	modelName := "bookmaker_first"
+	modelName := strings.TrimSpace(os.Getenv("PREDICTION_MODEL"))
+	if modelName == "" {
+		modelName = "bookmaker_first"
+	}
 	freeze := false
 	autoFreeze := false
 	runOnce := false

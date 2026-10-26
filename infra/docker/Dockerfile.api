@@ -6,12 +6,22 @@ RUN go mod download
 COPY . .
 RUN CGO_ENABLED=0 GOOS=linux go build -trimpath -ldflags="-s -w" -o /out/ops-api ./cmd/ops-api
 RUN CGO_ENABLED=0 GOOS=linux go build -trimpath -ldflags="-s -w" -o /out/migrate ./cmd/migrate
+RUN CGO_ENABLED=0 GOOS=linux go build -trimpath -ldflags="-s -w" -o /out/phase6-evaluate ./cmd/phase6-evaluate
+RUN CGO_ENABLED=0 GOOS=linux go build -trimpath -ldflags="-s -w" -o /out/phase6-shadow ./cmd/phase6-shadow
+RUN CGO_ENABLED=0 GOOS=linux go build -trimpath -ldflags="-s -w" -o /out/phase6-promote ./cmd/phase6-promote
+RUN CGO_ENABLED=0 GOOS=linux go build -trimpath -ldflags="-s -w" -o /out/phase6-register ./cmd/phase6-register
+RUN CGO_ENABLED=0 GOOS=linux go build -trimpath -ldflags="-s -w" -o /out/phase6-approve ./cmd/phase6-approve
 
 FROM alpine:3.21
 RUN addgroup -S vfl && adduser -S vfl -G vfl
 WORKDIR /app
 COPY --from=build /out/ops-api /app/ops-api
 COPY --from=build /out/migrate /app/migrate
+COPY --from=build /out/phase6-evaluate /app/phase6-evaluate
+COPY --from=build /out/phase6-shadow /app/phase6-shadow
+COPY --from=build /out/phase6-promote /app/phase6-promote
+COPY --from=build /out/phase6-register /app/phase6-register
+COPY --from=build /out/phase6-approve /app/phase6-approve
 COPY db/migrations /app/db/migrations
 USER vfl
 EXPOSE 8090

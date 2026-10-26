@@ -17,9 +17,10 @@ func TestApplyPredictionPayloadExposesBookmakerProvenance(t *testing.T) {
 			"implied":   map[string]float64{"home": 0.5, "draw": 0.3, "away": 0.2},
 			"overround": 1.08,
 		},
-		"secondary":       map[string]any{"over_2_5": 0.51},
-		"secondary_model": "poisson",
-		"feature_values":  map[string]float64{"home_form": 0.7},
+		"secondary":             map[string]any{"over_2_5": 0.51},
+		"secondary_model":       "poisson",
+		"dynamic_team_strength": map[string]any{"home_rating": 0.42, "total_matches_used": 12},
+		"feature_values":        map[string]float64{"home_form": 0.7},
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -39,6 +40,9 @@ func TestApplyPredictionPayloadExposesBookmakerProvenance(t *testing.T) {
 	}
 	if item.SecondaryModel != "poisson" {
 		t.Fatalf("secondary model=%q", item.SecondaryModel)
+	}
+	if item.DynamicTeamStrength["home_rating"] != float64(0.42) || item.Secondary["dynamic_team_strength"] == nil {
+		t.Fatalf("dynamic diagnostics=%v secondary=%v", item.DynamicTeamStrength, item.Secondary)
 	}
 }
 

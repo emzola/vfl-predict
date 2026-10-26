@@ -33,6 +33,29 @@ export type SecondaryGoalPrediction = {
   neither_team_scores?: number;
   correct_scores?: Record<string, number>;
   correct_score_residual_tail?: number;
+  dynamic_team_strength?: DynamicTeamStrength;
+};
+
+export type DynamicTeamStrength = {
+  home_rating: number;
+  away_rating: number;
+  home_rating_uncertainty: number;
+  away_rating_uncertainty: number;
+  home_attack_strength: number;
+  away_attack_strength: number;
+  home_defense_strength: number;
+  away_defense_strength: number;
+  home_attack_uncertainty: number;
+  away_attack_uncertainty: number;
+  home_defense_uncertainty: number;
+  away_defense_uncertainty: number;
+  expected_home_goals: number;
+  expected_away_goals: number;
+  league_scoring_intercept: number;
+  home_advantage: number;
+  season_matches_used: number;
+  total_matches_used: number;
+  state_as_of?: string;
 };
 
 export type Prediction = {
@@ -61,6 +84,7 @@ export type Prediction = {
   bookmaker?: Bookmaker;
   secondary?: SecondaryGoalPrediction;
   secondary_model?: string;
+  dynamic_team_strength?: DynamicTeamStrength;
   feature_values?: Record<string, number>;
   actual_outcome?: string;
   correct?: boolean;

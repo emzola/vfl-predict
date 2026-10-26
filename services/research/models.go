@@ -273,6 +273,8 @@ type GoalPrediction struct {
 	Probability       Probability        `json:"probability"`
 	LambdaHome        float64            `json:"lambda_home"`
 	LambdaAway        float64            `json:"lambda_away"`
+	ExpectedHomeGoals float64            `json:"expected_home_goals,omitempty"`
+	ExpectedAwayGoals float64            `json:"expected_away_goals,omitempty"`
 	Over25            float64            `json:"over_2_5"`
 	Under25           float64            `json:"under_2_5"`
 	BothTeamsToScore  float64            `json:"both_teams_to_score"`
@@ -286,7 +288,7 @@ func (m *PoissonGoalModel) PredictGoals(match MatchRecord, maxScore int) GoalPre
 		maxScore = 10
 	}
 	homeLambda, awayLambda := m.ExpectedGoals(match)
-	return poissonGoalPrediction(homeLambda, awayLambda, maxScore)
+	return scorelineGoalPrediction(homeLambda, awayLambda, maxScore)
 }
 
 type BookmakerImpliedModel struct {
@@ -414,13 +416,15 @@ func NewBaselineModel(name string, allowRetrospectiveOdds bool) (BaselineModel, 
 		return NewBookmakerFirstModel(allowRetrospectiveOdds), nil
 	case "statistical_bookmaker_combination", "combined":
 		return NewCombinedModel(allowRetrospectiveOdds), nil
+	case DynamicBayesianModelName, "dynamic_bayesian", "phase6":
+		return NewDynamicBayesianModel(), nil
 	default:
 		return nil, fmt.Errorf("unknown baseline model %q", name)
 	}
 }
 
 func BaselineModelNames() []string {
-	return []string{"overall_frequency", "home_draw_away_frequency", "team_strength", "poisson", "bookmaker_implied", "statistical_bookmaker_combination"}
+	return []string{"overall_frequency", "home_draw_away_frequency", "team_strength", "poisson", "bookmaker_implied", "statistical_bookmaker_combination", DynamicBayesianModelName}
 }
 
 func outcomeIndex(outcome OutcomeKey) int {
@@ -435,41 +439,7 @@ func outcomeIndex(outcome OutcomeKey) int {
 }
 
 func poissonGoalPrediction(homeLambda, awayLambda float64, maxScore int) GoalPrediction {
-	if maxScore < 1 {
-		maxScore = 10
-	}
-	homePMF := poissonPMF(homeLambda, maxScore)
-	awayPMF := poissonPMF(awayLambda, maxScore)
-	correct := make(map[string]float64, (maxScore+1)*(maxScore+1))
-	sum := 0.0
-	over25, btts := 0.0, 0.0
-	for home := 0; home <= maxScore; home++ {
-		for away := 0; away <= maxScore; away++ {
-			mass := homePMF[home] * awayPMF[away]
-			correct[fmt.Sprintf("%d-%d", home, away)] = mass
-			sum += mass
-			if home+away >= 3 {
-				over25 += mass
-			}
-			if home >= 1 && away >= 1 {
-				btts += mass
-			}
-		}
-	}
-	residual := clamp(1-sum, 0, 1)
-	under25 := 1 - over25
-	neither := 1 - btts
-	return GoalPrediction{
-		Probability:       poissonOutcomeProbabilities(homeLambda, awayLambda, maxScore),
-		LambdaHome:        homeLambda,
-		LambdaAway:        awayLambda,
-		Over25:            clamp(over25, 0, 1),
-		Under25:           clamp(under25, 0, 1),
-		BothTeamsToScore:  clamp(btts, 0, 1),
-		NeitherTeamScores: clamp(neither, 0, 1),
-		CorrectScores:     correct,
-		ResidualTail:      residual,
-	}
+	return scorelineGoalPrediction(homeLambda, awayLambda, maxScore)
 }
 
 func poissonOutcomeProbabilities(homeLambda, awayLambda float64, maxScore int) Probability {

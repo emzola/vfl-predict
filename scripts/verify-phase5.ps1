@@ -33,10 +33,13 @@ foreach ($path in @(
     'infra/docker/docker-compose.production.yml',
     'infra/docker/Caddyfile.production',
     'infra/docker/.env.production.example',
+    'infra/docker/Dockerfile.api',
     'infra/docker/Dockerfile.worker',
     'scripts/bootstrap-vps.sh',
     'scripts/deploy-production.sh',
     'scripts/rollback-production.sh',
+    'scripts/promote-phase6-production.sh',
+    'scripts/auto-promote-phase6-production.sh',
     'scripts/production-health-report.sh',
     'docs/phase-5-deployment.md'
 )) {
@@ -62,6 +65,21 @@ foreach ($required in @('flock', 'image-digests.txt', 'compose run --rm --no-dep
     if ($deploy -notmatch [regex]::Escape($required)) { throw "deployment script missing required marker: $required" }
 }
 if ($deploy -match 'docker\s+compose[^\r\n]*down\s+-v') { throw 'deployment script contains docker compose down -v' }
+
+$phase6Promotion = Get-Content scripts/promote-phase6-production.sh -Raw
+foreach ($required in @('CONFIRM_PROMOTION', 'phase6-promote', 'prediction-worker', 'model-promotion.lock', 'PHASE6_EVALUATION_REPORT', 'PHASE6_SHADOW_REPORT')) {
+    if ($phase6Promotion -notmatch [regex]::Escape($required)) { throw "Phase 6 promotion script missing required marker: $required" }
+}
+if ($phase6Promotion -match 'docker\s+compose[^\r\n]*down\s+-v') { throw 'Phase 6 promotion script contains docker compose down -v' }
+$phase6AutomaticPromotion = Get-Content scripts/auto-promote-phase6-production.sh -Raw
+foreach ($required in @('phase6-evaluate', 'phase6-shadow', 'phase6-register', 'phase6-approve', 'promote-phase6-production.sh', 'pre-cutoff shadow')) {
+    if ($phase6AutomaticPromotion -notmatch [regex]::Escape($required)) { throw "automatic Phase 6 promotion script missing required marker: $required" }
+}
+if ($phase6AutomaticPromotion -match 'docker\s+compose[^\r\n]*down\s+-v') { throw 'automatic Phase 6 promotion script contains docker compose down -v' }
+$workflow = Get-Content .github/workflows/phase5-production.yml -Raw
+foreach ($required in @('Run automatic Phase 6 replay, shadow, and promotion gates', 'scripts/auto-promote-phase6-production.sh')) {
+    if ($workflow -notmatch [regex]::Escape($required)) { throw "production workflow missing automatic Phase 6 marker: $required" }
+}
 
 $nativePreference = $PSNativeCommandUseErrorActionPreference
 $PSNativeCommandUseErrorActionPreference = $false
