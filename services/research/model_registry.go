@@ -105,25 +105,24 @@ func (s *ResearchStorage) SelectProductionArtifact(ctx context.Context, artifact
 		return fmt.Errorf("begin production model selection: %w", err)
 	}
 	defer func() { _ = tx.Rollback() }()
+	// Serialize the singleton transition even when production_model_selection has
+	// not been created yet. A row-level FOR UPDATE cannot lock a missing row, so
+	// two first-time promotions could otherwise both observe an empty selection.
+	if _, err := tx.ExecContext(ctx, `SELECT pg_advisory_xact_lock(hashtextextended('bet9ja-vfl:production-model-selection', 0))`); err != nil {
+		return fmt.Errorf("lock production model selection: %w", err)
+	}
+	var modelDefinitionID int64
 	var modelKey, modelVersion, promotionStatus string
 	if err := tx.QueryRowContext(ctx, `
-SELECT m.model_key, m.version, a.promotion_status
+SELECT a.model_definition_id, m.model_key, m.version, a.promotion_status
 FROM model_artifacts a
 JOIN model_definitions m ON m.model_definition_id = a.model_definition_id
 WHERE a.model_artifact_id = $1::uuid
-FOR UPDATE`, artifactID).Scan(&modelKey, &modelVersion, &promotionStatus); err != nil {
+FOR UPDATE`, artifactID).Scan(&modelDefinitionID, &modelKey, &modelVersion, &promotionStatus); err != nil {
 		return fmt.Errorf("load production candidate: %w", err)
 	}
 	if promotionStatus != "approved" && promotionStatus != "active" {
 		return fmt.Errorf("artifact must be approved before production selection; current status=%s", promotionStatus)
-	}
-	if promotionStatus == "approved" {
-		if _, err := tx.ExecContext(ctx, `
-UPDATE model_artifacts
-SET promotion_status = 'active', approved_at = COALESCE(approved_at, now())
-WHERE model_artifact_id = $1::uuid`, artifactID); err != nil {
-			return fmt.Errorf("activate production artifact: %w", err)
-		}
 	}
 	var previous string
 	if err := tx.QueryRowContext(ctx, `SELECT model_artifact_id::text FROM production_model_selection WHERE selection_key = 'production' FOR UPDATE`).Scan(&previous); err != nil && err != sql.ErrNoRows {
@@ -132,6 +131,26 @@ WHERE model_artifact_id = $1::uuid`, artifactID); err != nil {
 	if previous != "" && previous != artifactID {
 		if _, err := tx.ExecContext(ctx, `UPDATE model_artifacts SET promotion_status = 'retired', retired_at = COALESCE(retired_at, now()) WHERE model_artifact_id = $1::uuid AND promotion_status = 'active'`, previous); err != nil {
 			return fmt.Errorf("retire previous production artifact: %w", err)
+		}
+	}
+	// Retire any stale active artifact for this model definition before making
+	// the candidate active. The partial unique index is intentionally strict;
+	// retiring first makes the transition safe even if a previous run left the
+	// singleton selection row out of sync with the artifact registry.
+	if _, err := tx.ExecContext(ctx, `
+UPDATE model_artifacts
+SET promotion_status = 'retired', retired_at = COALESCE(retired_at, now())
+WHERE model_definition_id = $1
+  AND model_artifact_id <> $2::uuid
+  AND promotion_status = 'active'`, modelDefinitionID, artifactID); err != nil {
+		return fmt.Errorf("retire active artifacts for model definition: %w", err)
+	}
+	if promotionStatus == "approved" {
+		if _, err := tx.ExecContext(ctx, `
+UPDATE model_artifacts
+SET promotion_status = 'active', approved_at = COALESCE(approved_at, now())
+WHERE model_artifact_id = $1::uuid`, artifactID); err != nil {
+			return fmt.Errorf("activate production artifact: %w", err)
 		}
 	}
 	if _, err := tx.ExecContext(ctx, `
