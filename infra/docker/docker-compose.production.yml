@@ -51,6 +51,25 @@ services:
     networks:
       - backend
 
+  # One-shot Phase 6 research gates are intentionally isolated from the
+  # ordinary migration runner. Replay retains a complete report in memory and
+  # must not compete with the 512 MB migration budget.
+  phase6-research:
+    image: ${GHCR_IMAGE_PREFIX:?Set GHCR_IMAGE_PREFIX, for example ghcr.io/owner/repository}/vfl-api:${RELEASE_SHA:?Set RELEASE_SHA to an immutable Git commit SHA}
+    entrypoint: ["/app/migrate"]
+    environment:
+      DATABASE_URL: postgres://${POSTGRES_USER:-vfl}:${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in the VPS environment file}@postgres:5432/${POSTGRES_DB:-vfl}?sslmode=disable
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: "no"
+    labels: *app-labels
+    mem_limit: 1536m
+    cpus: "1.25"
+    logging: *default-logging
+    networks:
+      - backend
+
   api:
     image: ${GHCR_IMAGE_PREFIX:?Set GHCR_IMAGE_PREFIX, for example ghcr.io/owner/repository}/vfl-api:${RELEASE_SHA:?Set RELEASE_SHA to an immutable Git commit SHA}
     restart: unless-stopped

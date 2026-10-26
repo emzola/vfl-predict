@@ -14,11 +14,12 @@ runner remain private. The workers do not depend on a browser session.
 ```
 
 The Python service is not included in the production Compose file because the
-Phase 6 candidate remains a Go implementation. The automatic production gate
-uses the unified `dynamic_bayesian_team_strength` scoreline model only after a
-successful chronological replay, pre-cutoff shadow round, registry approval,
-and locked worker restart. LightGBM remains a research/training path and is not
-scheduled on the VPS.
+Phase 6 candidate remains a Go implementation. The production workflow directly
+activates the unified `dynamic_bayesian_team_strength` scoreline model after
+the normal digest-checked deployment and migration step. Historical replay and
+shadow evaluation are not part of the deployment critical path; they remain
+available as separate research/validation commands. LightGBM remains a
+research/training path and is not scheduled on the VPS.
 
 The production Compose configuration runs the Go prediction worker in
 `-auto-freeze` mode. It refreshes provisional predictions for the next
@@ -28,6 +29,12 @@ the hard cutoff protection; `PREDICTION_FREEZE_LEAD_SECONDS` controls how far
 before that cutoff the worker attempts the freeze. Once a complete frozen or
 settled run exists, the worker advances to the next round.
 
+The optional Phase 6 replay and shadow commands run through the separate
+`phase6-research` one-shot service, capped at 1536 MB and 1.25 CPU. They are
+not run by the normal deployment workflow. Direct activation uses the ordinary
+`migrate` service for a small registry transaction; the migration service
+remains capped at 512 MB for routine operations.
+
 ## Files
 
 - `infra/docker/docker-compose.production.yml` is the production topology.
@@ -36,7 +43,8 @@ settled run exists, the worker advances to the next round.
 - `infra/docker/Dockerfile.worker` builds the independent Go workers.
 - `scripts/deploy-production.sh` performs a locked, digest-checked deployment.
 - `scripts/rollback-production.sh` performs an explicitly authorized image-only rollback.
-- `scripts/auto-promote-phase6-production.sh` runs the Phase 6 replay, shadow, registry approval, and promotion gates after a successful `main` deployment.
+- `scripts/auto-promote-phase6-production.sh` remains available for optional gated research promotion.
+- `scripts/activate-phase6-production.sh` directly activates the Phase 6 model after a successful `main` deployment.
 - `scripts/promote-phase6-production.sh` performs the final locked model-policy switch and restarts only the prediction worker.
 - `scripts/bootstrap-vps.sh` prepares a host without creating credentials or changing DNS.
 - `.github/workflows/phase5-production.yml` validates, builds, publishes, and conditionally deploys.
@@ -88,10 +96,11 @@ Complete these prerequisites before pushing or merging the first release to
     leases, database health, and the first logical backup.
 
 Every successful push or merge to `main` runs validation, builds and publishes
-the release images, runs the guarded migration container, and updates the
-production services. Changes to `db/migrations/*.sql` do not require separate
-approval. A migration failure stops the release before application services are
-updated.
+the release images, runs the guarded migration container, updates the
+production services, and directly activates the Phase 6 model. Changes to
+`db/migrations/*.sql` do not require separate approval. A migration or direct
+activation failure stops the workflow; the environment backup and previous
+worker state remain available for recovery.
 
 ## Cloudflare and Caddy
 

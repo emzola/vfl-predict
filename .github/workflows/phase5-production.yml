@@ -51,6 +51,7 @@ jobs:
           bash -n scripts/deploy-production.sh
           bash -n scripts/promote-phase6-production.sh
           bash -n scripts/auto-promote-phase6-production.sh
+          bash -n scripts/activate-phase6-production.sh
       - name: Python contract and research tests
         run: python -m unittest discover -s services/model/tests -p 'test_*.py'
       - name: Python compile check
@@ -255,6 +256,7 @@ jobs:
             scripts/rollback-production.sh \
             scripts/promote-phase6-production.sh \
             scripts/auto-promote-phase6-production.sh \
+            scripts/activate-phase6-production.sh \
             image-digests.txt \
             "$target:$release_dir/"
       - name: Run guarded host deployment, including database migrations
@@ -266,8 +268,8 @@ jobs:
           release_dir="$PRODUCTION_APP_DIR/releases/${{ github.sha }}"
           ghcr_prefix="ghcr.io/${REPOSITORY,,}"
           ssh -i "$HOME/.ssh/id_ed25519" -o BatchMode=yes -o StrictHostKeyChecking=yes "$target" \
-            "chmod 0750 '$release_dir/deploy-production.sh' '$release_dir/rollback-production.sh' '$release_dir/promote-phase6-production.sh' && APP_DIR='$PRODUCTION_APP_DIR' RELEASE_SHA='${{ github.sha }}' GHCR_IMAGE_PREFIX='$ghcr_prefix' BUNDLE_DIR='$release_dir' DEPLOY_SERVICES='$PRODUCTION_DEPLOY_SERVICES' bash '$release_dir/deploy-production.sh'"
-      - name: Run automatic Phase 6 replay, shadow, and promotion gates
+            "chmod 0750 '$release_dir/deploy-production.sh' '$release_dir/rollback-production.sh' '$release_dir/promote-phase6-production.sh' '$release_dir/activate-phase6-production.sh' && APP_DIR='$PRODUCTION_APP_DIR' RELEASE_SHA='${{ github.sha }}' GHCR_IMAGE_PREFIX='$ghcr_prefix' BUNDLE_DIR='$release_dir' DEPLOY_SERVICES='$PRODUCTION_DEPLOY_SERVICES' bash '$release_dir/deploy-production.sh'"
+      - name: Activate Phase 6 production model without replay
         shell: bash
         env:
           REPOSITORY: ${{ github.repository }}
@@ -276,7 +278,7 @@ jobs:
           release_dir="$PRODUCTION_APP_DIR/releases/${{ github.sha }}"
           ghcr_prefix="ghcr.io/${REPOSITORY,,}"
           ssh -i "$HOME/.ssh/id_ed25519" -o BatchMode=yes -o StrictHostKeyChecking=yes "$target" \
-            "chmod 0750 '$release_dir/auto-promote-phase6-production.sh' && APP_DIR='$PRODUCTION_APP_DIR' RELEASE_SHA='${{ github.sha }}' GHCR_IMAGE_PREFIX='$ghcr_prefix' bash '$release_dir/auto-promote-phase6-production.sh'"
+            "APP_DIR='$PRODUCTION_APP_DIR' RELEASE_SHA='${{ github.sha }}' GHCR_IMAGE_PREFIX='$ghcr_prefix' CONFIRM_ACTIVATION=YES bash '$release_dir/activate-phase6-production.sh'"
 
   deployment-gate-report:
     name: Report deployment gate

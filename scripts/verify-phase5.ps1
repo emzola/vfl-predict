@@ -40,6 +40,7 @@ foreach ($path in @(
     'scripts/rollback-production.sh',
     'scripts/promote-phase6-production.sh',
     'scripts/auto-promote-phase6-production.sh',
+    'scripts/activate-phase6-production.sh',
     'scripts/production-health-report.sh',
     'docs/phase-5-deployment.md'
 )) {
@@ -49,7 +50,7 @@ foreach ($path in @(
 }
 
 $compose = Get-Content infra/docker/docker-compose.production.yml -Raw
-foreach ($required in @('postgres-data', 'migrate', 'RUN_MIGRATIONS', 'caddy', '80:80', '443:443', 'no-new-privileges', 'max-size', 'mem_limit', 'service_completed_successfully')) {
+foreach ($required in @('postgres-data', 'migrate', 'phase6-research', '1536m', 'RUN_MIGRATIONS', 'caddy', '80:80', '443:443', 'no-new-privileges', 'max-size', 'mem_limit', 'service_completed_successfully')) {
     if ($compose -notmatch [regex]::Escape($required)) { throw "production Compose missing required marker: $required" }
 }
 if ($compose -match 'ports:\s*\r?\n\s*-\s*"?\d+:5432') { throw 'production Compose publishes PostgreSQL to the host' }
@@ -61,7 +62,7 @@ foreach ($required in @('reverse_proxy api:8090', 'reverse_proxy web:3000', 'rep
 }
 
 $deploy = Get-Content scripts/deploy-production.sh -Raw
-foreach ($required in @('flock', 'image-digests.txt', 'compose run --rm --no-deps migrate', 'current-release', 'previous-release')) {
+foreach ($required in @('flock', 'image-digests.txt', 'compose pull migrate phase6-research', 'compose run --rm --no-deps migrate', 'current-release', 'previous-release')) {
     if ($deploy -notmatch [regex]::Escape($required)) { throw "deployment script missing required marker: $required" }
 }
 if ($deploy -match 'docker\s+compose[^\r\n]*down\s+-v') { throw 'deployment script contains docker compose down -v' }
@@ -72,14 +73,20 @@ foreach ($required in @('CONFIRM_PROMOTION', 'phase6-promote', 'prediction-worke
 }
 if ($phase6Promotion -match 'docker\s+compose[^\r\n]*down\s+-v') { throw 'Phase 6 promotion script contains docker compose down -v' }
 $phase6AutomaticPromotion = Get-Content scripts/auto-promote-phase6-production.sh -Raw
-foreach ($required in @('phase6-evaluate', 'phase6-shadow', 'phase6-register', 'phase6-approve', 'promote-phase6-production.sh', 'pre-cutoff shadow')) {
+foreach ($required in @('phase6-evaluate', 'phase6-shadow', 'phase6-register', 'phase6-approve', 'phase6-research', 'bootstrap-replicates 100', 'promote-phase6-production.sh', 'pre-cutoff shadow')) {
     if ($phase6AutomaticPromotion -notmatch [regex]::Escape($required)) { throw "automatic Phase 6 promotion script missing required marker: $required" }
 }
 if ($phase6AutomaticPromotion -match 'docker\s+compose[^\r\n]*down\s+-v') { throw 'automatic Phase 6 promotion script contains docker compose down -v' }
+$phase6DirectActivation = Get-Content scripts/activate-phase6-production.sh -Raw
+foreach ($required in @('CONFIRM_ACTIVATION', 'phase6-activate', 'model-promotion.lock', 'PREDICTION_MODEL=dynamic_bayesian_team_strength', 'prediction-worker', 'without replay or shadow evaluation')) {
+    if ($phase6DirectActivation -notmatch [regex]::Escape($required)) { throw "direct Phase 6 activation script missing required marker: $required" }
+}
+if ($phase6DirectActivation -match 'docker\s+compose[^\r\n]*down\s+-v') { throw 'direct Phase 6 activation script contains docker compose down -v' }
 $workflow = Get-Content .github/workflows/phase5-production.yml -Raw
-foreach ($required in @('Run automatic Phase 6 replay, shadow, and promotion gates', 'scripts/auto-promote-phase6-production.sh')) {
+foreach ($required in @('Activate Phase 6 production model without replay', 'scripts/activate-phase6-production.sh')) {
     if ($workflow -notmatch [regex]::Escape($required)) { throw "production workflow missing automatic Phase 6 marker: $required" }
 }
+if ($workflow -match 'Run automatic Phase 6 replay, shadow, and promotion gates') { throw 'production workflow still runs automatic Phase 6 replay gates' }
 
 $nativePreference = $PSNativeCommandUseErrorActionPreference
 $PSNativeCommandUseErrorActionPreference = $false

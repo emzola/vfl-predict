@@ -51,13 +51,14 @@ run_user="$(id -u):$(id -g)"
 echo "running Phase 6 chronological replay against the deployed database"
 compose run --rm -T --no-deps --user "$run_user" \
   -v "$PHASE6_DIR:/var/phase6" \
-  --entrypoint /app/phase6-evaluate migrate \
-  -report /var/phase6/phase6-replay-report.json
+  --entrypoint /app/phase6-evaluate phase6-research \
+  -report /var/phase6/phase6-replay-report.json \
+  -bootstrap-replicates 100
 [[ -s "$evaluation_report" ]] || fail "Phase 6 replay report was not created"
 
 echo "running a pre-cutoff shadow prediction for the next eligible round"
 compose run --rm -T --no-deps --user "$run_user" \
-  --entrypoint /app/phase6-shadow migrate \
+  --entrypoint /app/phase6-shadow phase6-research \
   > "$shadow_report"
 [[ -s "$shadow_report" ]] || fail "Phase 6 shadow report was not created"
 grep -Eq '"status"[[:space:]]*:[[:space:]]*"generated"' "$shadow_report" || fail "shadow gate did not generate a prediction run"
@@ -66,7 +67,7 @@ grep -Eq '"generated_count"[[:space:]]*:[[:space:]]*8' "$shadow_report" || fail 
 echo "registering the exact deployed API image as the Phase 6 candidate"
 registration_output="$(compose run --rm -T --no-deps --user "$run_user" \
   -v "$PHASE6_DIR:/var/phase6:ro" \
-  --entrypoint /app/phase6-register migrate \
+  --entrypoint /app/phase6-register phase6-research \
   -report /var/phase6/phase6-replay-report.json \
   -artifact-path "$GHCR_IMAGE_PREFIX/vfl-api@sha256:$api_digest" \
   -artifact-sha256 "$api_digest")"
@@ -76,7 +77,7 @@ artifact_id="$(printf '%s\n' "$registration_output" | sed -n 's/^registered Phas
 
 echo "approving the candidate after replay and shadow gates passed"
 compose run --rm -T --no-deps --user "$run_user" \
-  --entrypoint /app/phase6-approve migrate \
+  --entrypoint /app/phase6-approve phase6-research \
   -artifact-id "$artifact_id" \
   -approved-by "$APPROVED_BY" \
   -confirm YES \

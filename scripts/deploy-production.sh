@@ -87,7 +87,7 @@ printf '%s\n' "$previous" > "$APP_DIR/previous-release"
 
 # Pull first. The configured GHCR credential is expected to be a restricted
 # read-only credential already available to the deployment user on the VPS.
-compose pull migrate api web live-monitor prediction-worker settlement-worker caddy
+compose pull migrate phase6-research api web live-monitor prediction-worker settlement-worker caddy
 
 # The release artifact contains image|digest lines produced by CI. Refuse a
 # deployment if a pulled tag does not resolve to the expected immutable digest.

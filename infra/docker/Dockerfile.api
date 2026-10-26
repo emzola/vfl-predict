@@ -11,6 +11,7 @@ RUN CGO_ENABLED=0 GOOS=linux go build -trimpath -ldflags="-s -w" -o /out/phase6-
 RUN CGO_ENABLED=0 GOOS=linux go build -trimpath -ldflags="-s -w" -o /out/phase6-promote ./cmd/phase6-promote
 RUN CGO_ENABLED=0 GOOS=linux go build -trimpath -ldflags="-s -w" -o /out/phase6-register ./cmd/phase6-register
 RUN CGO_ENABLED=0 GOOS=linux go build -trimpath -ldflags="-s -w" -o /out/phase6-approve ./cmd/phase6-approve
+RUN CGO_ENABLED=0 GOOS=linux go build -trimpath -ldflags="-s -w" -o /out/phase6-activate ./cmd/phase6-activate
 
 FROM alpine:3.21
 RUN addgroup -S vfl && adduser -S vfl -G vfl
@@ -22,6 +23,7 @@ COPY --from=build /out/phase6-shadow /app/phase6-shadow
 COPY --from=build /out/phase6-promote /app/phase6-promote
 COPY --from=build /out/phase6-register /app/phase6-register
 COPY --from=build /out/phase6-approve /app/phase6-approve
+COPY --from=build /out/phase6-activate /app/phase6-activate
 COPY db/migrations /app/db/migrations
 USER vfl
 EXPOSE 8090
