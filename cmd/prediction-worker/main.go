@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"flag"
 	"fmt"
+	"log"
 	"os"
 	"os/signal"
 	"strconv"
@@ -15,6 +16,7 @@ import (
 
 	"bet9ja-vfl/services/ingest"
 	"bet9ja-vfl/services/prediction"
+	"bet9ja-vfl/services/research"
 )
 
 func main() {
@@ -65,11 +67,18 @@ func main() {
 	engine := prediction.NewEngine(db)
 	config := prediction.DefaultConfig()
 	config.ModelName = modelName
+	if strings.EqualFold(modelName, research.DynamicBayesianModelName) {
+		config.PolicyVersion = "phase6.pre_match.dynamic_bayesian.v1"
+	}
 	config.SafetyBuffer = safetyBuffer
 	ownerID := fmt.Sprintf("prediction-worker-%d", os.Getpid())
 	generate := func() {
 		token, acquired, leaseErr := repo.AcquireLease(ctx, "prediction-worker", ownerID, 4*time.Minute)
-		if leaseErr != nil || !acquired {
+		if leaseErr != nil {
+			log.Printf("lease acquisition failed: %v", leaseErr)
+			return
+		}
+		if !acquired {
 			return
 		}
 		defer func() { _ = repo.ReleaseLease(context.Background(), "prediction-worker", ownerID, token) }()
@@ -77,7 +86,13 @@ func main() {
 		if target.SeasonID == "" || target.Round <= 0 {
 			var nextErr error
 			target, nextErr = nextRound(ctx, db)
-			if nextErr != nil || target.SeasonID == "" || target.Round <= 0 {
+			if nextErr != nil {
+				if nextErr != sql.ErrNoRows {
+					log.Printf("next prediction round lookup failed: %v", nextErr)
+				}
+				return
+			}
+			if target.SeasonID == "" || target.Round <= 0 {
 				return
 			}
 		}
@@ -85,16 +100,25 @@ func main() {
 		executionID, executionErr := repo.StartJobExecution(ctx, "prediction-worker", "prediction-worker", 1,
 			fmt.Sprintf(`{"season_id":%q,"round":%d,"freeze":%t}`, target.SeasonID, target.Round, freezeRun))
 		if executionErr != nil {
+			log.Printf("could not start prediction job for season=%s round=%d: %v", target.SeasonID, target.Round, executionErr)
 			return
 		}
 		report, generationErr := engine.GenerateRound(ctx, target.SeasonID, target.Round, config, freezeRun)
 		if generationErr != nil {
 			retryable := true
-			_ = repo.FinishJobExecution(ctx, executionID, "failed", "prediction_generation_failed", generationErr.Error(), &retryable, 0, 0, `{}`)
+			details := fmt.Sprintf(`{"season_id":%q,"round":%d,"model":%q}`, target.SeasonID, target.Round, config.ModelName)
+			_ = repo.FinishJobExecution(ctx, executionID, "failed", "prediction_generation_failed", generationErr.Error(), &retryable, 0, 0, details)
+			log.Printf("prediction generation failed season=%s round=%d model=%s: %v", target.SeasonID, target.Round, config.ModelName, generationErr)
 			return
 		}
+		reportJSON, _ := json.Marshal(report)
 		_ = repo.FinishJobExecution(ctx, executionID, "succeeded", "", "", nil, report.GeneratedCount, 0,
-			fmt.Sprintf(`{"prediction_status":%q,"run_id":%q}`, report.Status, report.RunID))
+			string(reportJSON))
+		if report.Status != prediction.StatusProvisional && report.Status != prediction.StatusFrozen && report.Status != prediction.StatusSettled {
+			log.Printf("prediction round did not produce an eligible run season=%s round=%d status=%s fixtures=%d generated=%d warnings=%v", report.SeasonID, report.Round, report.Status, report.FixtureCount, report.GeneratedCount, report.Warnings)
+		} else {
+			log.Printf("prediction round generated season=%s round=%d model=%s status=%s fixtures=%d generated=%d", report.SeasonID, report.Round, config.ModelName, report.Status, report.FixtureCount, report.GeneratedCount)
+		}
 	}
 	if runOnce {
 		if seasonID == "" || round < 1 || round > 30 {
@@ -116,10 +140,14 @@ func main() {
 		report, err := engine.GenerateRound(ctx, seasonID, round, config, freeze)
 		if err != nil {
 			retryable := true
-			_ = repo.FinishJobExecution(ctx, executionID, "failed", "prediction_generation_failed", err.Error(), &retryable, 0, 0, `{}`)
+			details := fmt.Sprintf(`{"season_id":%q,"round":%d,"model":%q}`, seasonID, round, config.ModelName)
+			_ = repo.FinishJobExecution(ctx, executionID, "failed", "prediction_generation_failed", err.Error(), &retryable, 0, 0, details)
+			log.Printf("prediction generation failed season=%s round=%d model=%s: %v", seasonID, round, config.ModelName, err)
 		} else {
+			reportJSON, _ := json.Marshal(report)
 			_ = repo.FinishJobExecution(ctx, executionID, "succeeded", "", "", nil, report.GeneratedCount, 0,
-				fmt.Sprintf(`{"prediction_status":%q,"run_id":%q}`, report.Status, report.RunID))
+				string(reportJSON))
+			log.Printf("prediction run-once completed season=%s round=%d model=%s status=%s fixtures=%d generated=%d warnings=%v", report.SeasonID, report.Round, config.ModelName, report.Status, report.FixtureCount, report.GeneratedCount, report.Warnings)
 		}
 		_ = repo.ReleaseLease(context.Background(), "prediction-worker", ownerID, token)
 		if err != nil {

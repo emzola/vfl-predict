@@ -125,6 +125,7 @@ type predictionPage struct {
 	CutoffAt          *time.Time       `json:"cutoff_at,omitempty"`
 	Fixtures          []predictionView `json:"fixtures"`
 	Complete          bool             `json:"complete"`
+	FailureReason     string           `json:"failure_reason,omitempty"`
 	Provenance        string           `json:"provenance"`
 }
 
@@ -576,7 +577,7 @@ func (s *Server) operationsAPI(w http.ResponseWriter, r *http.Request) {
 		}
 		result["leases"] = leases
 	}
-	jobRows, err := s.DB.QueryContext(r.Context(), "SELECT job_key, worker_name, status, started_at, finished_at, error_code FROM job_execution_history ORDER BY started_at DESC LIMIT 50")
+	jobRows, err := s.DB.QueryContext(r.Context(), "SELECT job_key, worker_name, status, started_at, finished_at, error_code, error_message FROM job_execution_history ORDER BY started_at DESC LIMIT 50")
 	if err == nil {
 		defer jobRows.Close()
 		jobs := make([]map[string]any, 0)
@@ -584,14 +585,17 @@ func (s *Server) operationsAPI(w http.ResponseWriter, r *http.Request) {
 			var key, worker, status string
 			var started time.Time
 			var finished sql.NullTime
-			var errorCode sql.NullString
-			if jobRows.Scan(&key, &worker, &status, &started, &finished, &errorCode) == nil {
+			var errorCode, errorMessage sql.NullString
+			if jobRows.Scan(&key, &worker, &status, &started, &finished, &errorCode, &errorMessage) == nil {
 				item := map[string]any{"job_key": key, "worker_name": worker, "status": status, "started_at": started.UTC()}
 				if finished.Valid {
 					item["finished_at"] = finished.Time.UTC()
 				}
 				if errorCode.Valid {
 					item["error_code"] = errorCode.String
+				}
+				if errorMessage.Valid {
+					item["error_message"] = errorMessage.String
 				}
 				jobs = append(jobs, item)
 			}
@@ -810,6 +814,35 @@ func (s *Server) loadPredictionPage(r *http.Request, seasonID string, round int,
 		page.Fixtures = append(page.Fixtures, item)
 	}
 	page.Complete = page.ExpectedFixtures == 8 && page.GeneratedFixtures == 8 && len(page.Fixtures) == 8
+	// An unavailable or missed run has no revision rows by design. Preserve its
+	// status and failure reason so the dashboard does not reduce an auditable
+	// worker outcome to the ambiguous label "unavailable".
+	if len(page.Fixtures) == 0 && seasonID != "" && round > 0 {
+		var status, modelVersion string
+		var predictionAsOf, cutoff time.Time
+		var expected, generated int
+		var failureReason sql.NullString
+		err := s.DB.QueryRowContext(r.Context(), `
+SELECT status, model_version, prediction_as_of, input_cutoff_at,
+       expected_fixture_count, generated_fixture_count, failure_reason
+FROM prediction_runs
+WHERE season_id = $1 AND round_no = $2
+ORDER BY prediction_as_of DESC, created_at DESC
+LIMIT 1`, seasonID, round).Scan(&status, &modelVersion, &predictionAsOf, &cutoff, &expected, &generated, &failureReason)
+		if err == nil {
+			page.Status = status
+			page.ModelVersion = modelVersion
+			page.ExpectedFixtures = expected
+			page.GeneratedFixtures = generated
+			predictionAsOf = predictionAsOf.UTC()
+			cutoff = cutoff.UTC()
+			page.PredictionAsOf = &predictionAsOf
+			page.CutoffAt = &cutoff
+			if failureReason.Valid {
+				page.FailureReason = failureReason.String
+			}
+		}
+	}
 	return page, rows.Err()
 }
 

@@ -102,6 +102,7 @@ export type PredictionPage = {
   cutoff_at?: string;
   fixtures: Prediction[];
   complete: boolean;
+  failure_reason?: string;
   provenance: string;
 };
 
