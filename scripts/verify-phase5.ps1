@@ -62,7 +62,7 @@ foreach ($required in @('reverse_proxy api:8090', 'reverse_proxy web:3000', 'rep
 }
 
 $deploy = Get-Content scripts/deploy-production.sh -Raw
-foreach ($required in @('flock', 'image-digests.txt', 'compose pull migrate phase6-research', 'compose run --rm --no-deps migrate', 'current-release', 'previous-release')) {
+foreach ($required in @('flock', 'image-digests.txt', 'compose pull migrate phase6-research', 'DEPLOY_PULL_ATTEMPTS', 'DEPLOY_PULL_INITIAL_DELAY_SECONDS', 'pull_attempt', 'compose run --rm --no-deps migrate', 'current-release', 'previous-release')) {
     if ($deploy -notmatch [regex]::Escape($required)) { throw "deployment script missing required marker: $required" }
 }
 if ($deploy -match 'docker\s+compose[^\r\n]*down\s+-v') { throw 'deployment script contains docker compose down -v' }

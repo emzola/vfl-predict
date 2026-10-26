@@ -87,7 +87,34 @@ printf '%s\n' "$previous" > "$APP_DIR/previous-release"
 
 # Pull first. The configured GHCR credential is expected to be a restricted
 # read-only credential already available to the deployment user on the VPS.
-compose pull migrate phase6-research api web live-monitor prediction-worker settlement-worker caddy
+pull_attempts="${DEPLOY_PULL_ATTEMPTS:-4}"
+pull_delay="${DEPLOY_PULL_INITIAL_DELAY_SECONDS:-10}"
+if [[ ! "$pull_attempts" =~ ^[1-9][0-9]*$ || ! "$pull_delay" =~ ^[1-9][0-9]*$ ]]; then
+  echo "DEPLOY_PULL_ATTEMPTS and DEPLOY_PULL_INITIAL_DELAY_SECONDS must be positive integers" >&2
+  exit 2
+fi
+pull_succeeded=0
+for pull_attempt in $(seq 1 "$pull_attempts"); do
+  echo "pulling release images (attempt $pull_attempt/$pull_attempts)"
+  if compose pull migrate phase6-research api web live-monitor prediction-worker settlement-worker caddy; then
+    pull_succeeded=1
+    break
+  fi
+  if [[ "$pull_attempt" != "$pull_attempts" ]]; then
+    echo "image pull failed; retrying in ${pull_delay}s" >&2
+    sleep "$pull_delay"
+    if (( pull_delay < 60 )); then
+      pull_delay=$((pull_delay * 2))
+      if (( pull_delay > 60 )); then
+        pull_delay=60
+      fi
+    fi
+  fi
+done
+if [[ "$pull_succeeded" != "1" ]]; then
+  echo "image pull failed after $pull_attempts attempts" >&2
+  exit 8
+fi
 
 # The release artifact contains image|digest lines produced by CI. Refuse a
 # deployment if a pulled tag does not resolve to the expected immutable digest.
