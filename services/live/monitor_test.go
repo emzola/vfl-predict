@@ -65,21 +65,107 @@ func TestUpcomingRoundsExcludeCompletedAndOrderByKickoff(t *testing.T) {
 }
 
 func TestCurrentSeasonRequiresExactlyOneCurrentFlag(t *testing.T) {
+	now := time.Date(2026, 10, 25, 12, 0, 0, 0, time.UTC)
 	seasons := provider.SeasonDiscovery{Seasons: []provider.SeasonSummary{
 		{ID: provider.SeasonID("3149001"), TournamentID: 14149, Current: true},
 		{ID: provider.SeasonID("3149000"), TournamentID: 14149, Current: false},
 	}}
-	got, err := currentSeason(seasons)
+	got, err := currentSeason(seasons, now)
 	if err != nil || got.ID != provider.SeasonID("3149001") {
 		t.Fatalf("current season=%+v err=%v", got, err)
 	}
 	seasons.Seasons[1].Current = true
-	if _, err := currentSeason(seasons); err == nil {
+	if _, err := currentSeason(seasons, now); err == nil {
 		t.Fatal("multiple current seasons should be rejected")
 	}
 	seasons.Seasons[1].Current = false
 	seasons.Seasons[0].Current = false
-	if _, err := currentSeason(seasons); err == nil {
+	if _, err := currentSeason(seasons, now); err == nil {
 		t.Fatal("missing current season should be rejected")
+	}
+}
+
+func TestCurrentSeasonUsesActiveDateWindowWhenProviderFlagIsStale(t *testing.T) {
+	now := time.Date(2026, 10, 26, 20, 52, 25, 0, time.UTC)
+	seasons := provider.SeasonDiscovery{Seasons: []provider.SeasonSummary{
+		{
+			ID:           provider.SeasonID("3150118"),
+			TournamentID: 14149,
+			Current:      true,
+			StartUTC:     now.Add(-2 * time.Hour),
+			EndUTC:       now.Add(-10 * time.Minute),
+		},
+		{
+			ID:           provider.SeasonID("3150148"),
+			TournamentID: 14149,
+			Current:      false,
+			StartUTC:     now.Add(-10 * time.Minute),
+			EndUTC:       now.Add(2 * time.Hour),
+		},
+	}}
+
+	got, err := currentSeason(seasons, now)
+	if err != nil {
+		t.Fatalf("current season error: %v", err)
+	}
+	if got.ID != provider.SeasonID("3150148") {
+		t.Fatalf("current season=%s, want 3150148", got.ID)
+	}
+}
+
+func TestCurrentSeasonPreservesFlagDuringGapBetweenSeasons(t *testing.T) {
+	now := time.Date(2026, 10, 26, 20, 40, 0, 0, time.UTC)
+	seasons := provider.SeasonDiscovery{Seasons: []provider.SeasonSummary{
+		{
+			ID:           provider.SeasonID("3150118"),
+			TournamentID: 14149,
+			Current:      true,
+			StartUTC:     now.Add(-2 * time.Hour),
+			EndUTC:       now.Add(-time.Minute),
+		},
+		{
+			ID:           provider.SeasonID("3150148"),
+			TournamentID: 14149,
+			Current:      false,
+			StartUTC:     now.Add(time.Minute),
+			EndUTC:       now.Add(2 * time.Hour),
+		},
+	}}
+
+	got, err := currentSeason(seasons, now)
+	if err != nil {
+		t.Fatalf("current season error: %v", err)
+	}
+	if got.ID != provider.SeasonID("3150118") {
+		t.Fatalf("current season=%s, want flagged season during gap", got.ID)
+	}
+}
+
+func TestCurrentSeasonRejectsMultipleDateActiveSeasons(t *testing.T) {
+	now := time.Date(2026, 10, 26, 20, 52, 25, 0, time.UTC)
+	seasons := provider.SeasonDiscovery{Seasons: []provider.SeasonSummary{
+		{
+			ID:           provider.SeasonID("3150118"),
+			TournamentID: 14149,
+			Current:      true,
+			StartUTC:     now.Add(-2 * time.Hour),
+			EndUTC:       now.Add(-10 * time.Minute),
+		},
+		{
+			ID:           provider.SeasonID("3150148"),
+			TournamentID: 14149,
+			StartUTC:     now.Add(-10 * time.Minute),
+			EndUTC:       now.Add(2 * time.Hour),
+		},
+		{
+			ID:           provider.SeasonID("3150149"),
+			TournamentID: 14149,
+			StartUTC:     now.Add(-5 * time.Minute),
+			EndUTC:       now.Add(3 * time.Hour),
+		},
+	}}
+
+	if _, err := currentSeason(seasons, now); err == nil {
+		t.Fatal("multiple date-active seasons should be rejected")
 	}
 }

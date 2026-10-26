@@ -193,3 +193,13 @@ These findings do not resolve the provider-side assumptions listed above,
 especially the historical/live season discrepancy, refresh/quota behavior,
 odds availability timing, or provider authorization terms. They also do not
 claim that the application has been deployed or is profitable.
+
+## Phase 6 live season-transition observation (2026-10-26)
+
+| ID | Phase 6 finding | Remaining limitation |
+|---|---|---|
+| API-55 | During a production transition observation, the season catalog contained `3150118` with `current=true` and an end time of `2026-10-26 20:44:54 UTC`, while `3150148` had `current=false` and a start time of `2026-10-26 20:44:54 UTC`. The database clock was `2026-10-26 20:52:25 UTC`. The live monitor now keeps the provider flag when it falls inside its explicit date window, but selects the sole date-active season when the flag is stale. | This is a bounded recovery rule for the observed transition; it does not establish that the provider's date windows are authoritative in every response. Multiple date-active seasons, missing windows, and ambiguous gaps remain errors or preserve the provider flag for the next poll. No season is selected by ID ordering. |
+
+The transition rule is covered by live-monitor regression tests. After the fix
+is deployed, the monitor must perform its next successful discovery and fixture
+poll before the prediction worker can create rounds for the new season.

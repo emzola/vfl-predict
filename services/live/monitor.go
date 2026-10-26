@@ -290,7 +290,7 @@ func (m *Monitor) pollOnceLeased(ctx context.Context, now time.Time) (PollReport
 		_ = m.Repo.SaveObservation(ctx, "live_season_discovery", requestKey, response, rawID, false, "", 0, "invalid", fmt.Sprintf(`{"error":%q}`, err.Error()))
 		return PollReport{}, err
 	}
-	current, err := currentSeason(discovery)
+	current, err := currentSeason(discovery, now)
 	if err != nil {
 		return PollReport{}, err
 	}
@@ -409,22 +409,51 @@ func (m *Monitor) pollOnceLeased(ctx context.Context, now time.Time) (PollReport
 	return report, nil
 }
 
-func currentSeason(discovery provider.SeasonDiscovery) (provider.SeasonSummary, error) {
-	var current *provider.SeasonSummary
+func currentSeason(discovery provider.SeasonDiscovery, now time.Time) (provider.SeasonSummary, error) {
+	var flagged *provider.SeasonSummary
 	for index := range discovery.Seasons {
 		season := discovery.Seasons[index]
 		if !season.Current {
 			continue
 		}
-		if current != nil {
+		if flagged != nil {
 			return provider.SeasonSummary{}, errors.New("season discovery contains multiple current seasons")
 		}
-		current = &season
+		flagged = &season
 	}
-	if current == nil {
-		return provider.SeasonSummary{}, errors.New("season discovery contains no current season")
+
+	// The provider's current flag is authoritative while it describes an
+	// active season. During a season transition, however, the catalog can
+	// briefly retain the previous flag while already returning the next
+	// season with a valid active date window. Use that explicit provider date
+	// range as a bounded transition fallback; do not infer a season from an ID
+	// or from an arbitrary ordering of the catalog.
+	active := make([]provider.SeasonSummary, 0, 1)
+	for _, season := range discovery.Seasons {
+		if !season.StartUTC.IsZero() && !season.EndUTC.IsZero() &&
+			!now.Before(season.StartUTC) && now.Before(season.EndUTC) {
+			active = append(active, season)
+		}
 	}
-	return *current, nil
+	if flagged != nil && seasonContains(flagged.StartUTC, flagged.EndUTC, now) {
+		return *flagged, nil
+	}
+	if len(active) == 1 {
+		return active[0], nil
+	}
+	if len(active) > 1 {
+		return provider.SeasonSummary{}, errors.New("season discovery contains multiple date-active seasons")
+	}
+	if flagged != nil {
+		// Preserve the provider-selected season across a gap between seasons;
+		// the next poll can apply the date-window fallback once it starts.
+		return *flagged, nil
+	}
+	return provider.SeasonSummary{}, errors.New("season discovery contains no current or date-active season")
+}
+
+func seasonContains(start, end, now time.Time) bool {
+	return !start.IsZero() && !end.IsZero() && !now.Before(start) && now.Before(end)
 }
 
 func upcomingRounds(fixtures []provider.Fixture, now time.Time) ([]int, time.Time) {
