@@ -40,6 +40,10 @@ func main() {
 	if err != nil {
 		fatal(err.Error())
 	}
+	generationTimeout, err := durationFromEnvSeconds("PREDICTION_GENERATION_TIMEOUT_SECONDS", 90*time.Second)
+	if err != nil {
+		fatal(err.Error())
+	}
 	flag.StringVar(&databaseURL, "database-url", databaseURL, "PostgreSQL connection URL")
 	flag.StringVar(&migrationsDir, "migrations-dir", migrationsDir, "directory containing SQL migrations")
 	flag.StringVar(&seasonID, "season-id", seasonID, "season to predict; required for run-once")
@@ -72,6 +76,7 @@ func main() {
 	}
 	config.SafetyBuffer = safetyBuffer
 	ownerID := fmt.Sprintf("prediction-worker-%d", os.Getpid())
+	log.Printf("prediction worker started model=%s interval=%s generation_timeout=%s", config.ModelName, interval, generationTimeout)
 	generate := func() {
 		token, acquired, leaseErr := repo.AcquireLease(ctx, "prediction-worker", ownerID, 4*time.Minute)
 		if leaseErr != nil {
@@ -103,7 +108,10 @@ func main() {
 			log.Printf("could not start prediction job for season=%s round=%d: %v", target.SeasonID, target.Round, executionErr)
 			return
 		}
-		report, generationErr := engine.GenerateRound(ctx, target.SeasonID, target.Round, config, freezeRun)
+		log.Printf("prediction generation started season=%s round=%d model=%s freeze=%t", target.SeasonID, target.Round, config.ModelName, freezeRun)
+		generationCtx, cancelGeneration := context.WithTimeout(ctx, generationTimeout)
+		report, generationErr := engine.GenerateRound(generationCtx, target.SeasonID, target.Round, config, freezeRun)
+		cancelGeneration()
 		if generationErr != nil {
 			retryable := true
 			details := fmt.Sprintf(`{"season_id":%q,"round":%d,"model":%q}`, target.SeasonID, target.Round, config.ModelName)
@@ -137,7 +145,9 @@ func main() {
 			_ = repo.ReleaseLease(context.Background(), "prediction-worker", ownerID, token)
 			fatal(err.Error())
 		}
-		report, err := engine.GenerateRound(ctx, seasonID, round, config, freeze)
+		generationCtx, cancelGeneration := context.WithTimeout(ctx, generationTimeout)
+		report, err := engine.GenerateRound(generationCtx, seasonID, round, config, freeze)
+		cancelGeneration()
 		if err != nil {
 			retryable := true
 			details := fmt.Sprintf(`{"season_id":%q,"round":%d,"model":%q}`, seasonID, round, config.ModelName)

@@ -112,9 +112,36 @@ func (e *Engine) GenerateRound(ctx context.Context, seasonID string, round int, 
 		return RoundReport{}, errors.New("season and round are required")
 	}
 	now := e.now()
-	dataset, err := research.LoadDataset(ctx, e.DB)
+	dynamicModel := isDynamicModelName(cfg.ModelName)
+	var dataset research.Dataset
+	var err error
+	if dynamicModel {
+		dataset, err = research.LoadFixtureDataset(ctx, e.DB)
+	} else {
+		dataset, err = research.LoadDataset(ctx, e.DB)
+	}
 	if err != nil {
 		return RoundReport{}, fmt.Errorf("load prediction dataset: %w", err)
+	}
+	if dynamicModel {
+		// The dynamic model fits from completed fixtures/results. Load odds only
+		// for the eight target fixtures so point-in-time market metadata remains
+		// available without scanning the full historical odds archive.
+		targetIDs := make([]provider.MatchID, 0, 8)
+		for _, match := range dataset.Matches {
+			if match.SeasonID.String() == seasonID && match.Round == round {
+				targetIDs = append(targetIDs, match.MatchID)
+			}
+		}
+		oddsByMatch, oddsErr := research.LoadOddsForMatches(ctx, e.DB, targetIDs)
+		if oddsErr != nil {
+			return RoundReport{}, fmt.Errorf("load target odds: %w", oddsErr)
+		}
+		for index := range dataset.Matches {
+			if odds, ok := oddsByMatch[dataset.Matches[index].MatchID]; ok {
+				dataset.Matches[index].Odds = odds
+			}
+		}
 	}
 	targets := make([]research.MatchRecord, 0, 8)
 	for _, match := range dataset.Matches {
@@ -382,13 +409,20 @@ func eligibleOdds(quotes []research.OddsQuote, cutoff time.Time, requireVerified
 }
 
 func predictionModelDescription(modelName string) string {
-	if strings.EqualFold(strings.TrimSpace(modelName), research.DynamicBayesianModelName) || strings.EqualFold(strings.TrimSpace(modelName), "dynamic_bayesian") || strings.EqualFold(strings.TrimSpace(modelName), "phase6") {
+	if isDynamicModelName(modelName) {
 		return "Phase 6 unified dynamic opponent-adjusted rating and regularized Bayesian attack/defense scoreline model"
 	}
 	if strings.EqualFold(strings.TrimSpace(modelName), "bookmaker_first") || strings.EqualFold(strings.TrimSpace(modelName), "market_first") || strings.EqualFold(strings.TrimSpace(modelName), "production") {
 		return "Phase 5 bookmaker-first production policy with verified pre-cutoff Poisson fallback"
 	}
 	return "Phase 3 statistical baseline prediction"
+}
+
+func isDynamicModelName(modelName string) bool {
+	trimmed := strings.TrimSpace(modelName)
+	return strings.EqualFold(trimmed, research.DynamicBayesianModelName) ||
+		strings.EqualFold(trimmed, "dynamic_bayesian") ||
+		strings.EqualFold(trimmed, "phase6")
 }
 
 func nullableTime(value time.Time) string {
