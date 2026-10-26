@@ -459,6 +459,14 @@ func seasonContains(start, end, now time.Time) bool {
 func upcomingRounds(fixtures []provider.Fixture, now time.Time) ([]int, time.Time) {
 	byRound := make(map[int][]provider.Fixture)
 	for _, fixture := range fixtures {
+		// A provider may leave the score empty for an in-progress or otherwise
+		// unresolved fixture. Such a fixture must not block later rounds from
+		// being considered upcoming: fixture persistence above still records it
+		// for settlement/reconciliation, while prediction and odds selection are
+		// limited to rounds whose scheduled kickoff has not passed.
+		if !fixture.ScheduledAt.After(now) {
+			continue
+		}
 		status := fixture.StatusAsOf(now, 120*time.Second)
 		if status == provider.MatchStatusCompleted || status == provider.MatchStatusCanceled {
 			continue

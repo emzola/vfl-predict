@@ -53,6 +53,9 @@ func TestUpcomingRoundsExcludeCompletedAndOrderByKickoff(t *testing.T) {
 		{Round: 2, ScheduledAt: now.Add(20 * time.Minute), Score: nil},
 		{Round: 2, ScheduledAt: now.Add(25 * time.Minute), Score: nil},
 		{Round: 1, ScheduledAt: now.Add(-time.Hour), Score: &provider.Score{Home: 1, Away: 0}},
+		// An unresolved past fixture is not a future prediction target and must
+		// not prevent round 3 from being selected.
+		{Round: 1, ScheduledAt: now.Add(-30 * time.Minute), Score: nil},
 		{Round: 3, ScheduledAt: now.Add(2 * time.Hour), Score: nil},
 	}
 	got, first := upcomingRounds(fixtures, now)
