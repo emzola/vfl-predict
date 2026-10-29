@@ -13,6 +13,8 @@ const virtualUrl = process.env.BET9JA_VIRTUAL_URL || "https://virtual.bet9ja.com
 const tournamentName = process.env.BET9JA_VFL_TOURNAMENT_NAME || "Euro League";
 const fallbackUsername = process.env.BET9JA_USERNAME || "";
 const fallbackPassword = process.env.BET9JA_PASSWORD || "";
+// Bet9ja automation intentionally runs headed under Xvfb so the site sees the
+// same browser mode as the operator and the worker can be inspected if needed.
 const headless = false;
 const dryRun = /^true$/i.test(process.env.AUTOBET_DRY_RUN || "false");
 const userDataRoot = process.env.AUTOBET_USER_DATA_DIR || path.join("/tmp", "autobet-browser");
@@ -53,6 +55,14 @@ const config = {
     'button:has-text("Sign in")',
     'text=/\\blog\\s*in\\b/i',
   ]),
+  loginFailureSelectors: selectorList("BET9JA_LOGIN_FAILURE_SELECTORS", [
+    'text=/invalid\\s+(?:username|password|credentials)/i',
+    'text=/incorrect\\s+(?:username|password|credentials)/i',
+    'text=/wrong\\s+(?:username|password)/i',
+    'text=/captcha/i',
+    'text=/verification\\s+(?:code|required)/i',
+    'text=/too\\s+many\\s+login\\s+attempts/i',
+  ]),
   logoutIndicators: selectorList("BET9JA_LOGOUT_INDICATORS", [
     'text=/my\\s*account/i',
     'text=/make\\s*a\\s*deposit/i',
@@ -89,6 +99,7 @@ const config = {
     'input[placeholder*="stake" i]',
     'input[placeholder*="amount" i]',
     'input[type="number"]',
+    'input:not([type="hidden"])',
   ]),
   submitSelectors: selectorList("BET9JA_PLACE_BET_SELECTORS", [
     'button:has-text("Place Bet")',
@@ -96,7 +107,15 @@ const config = {
     'button:has-text("Place bet")',
     'text=/place\\s*bet/i',
   ]),
+  betslipHeaderSelectors: selectorList("BET9JA_BETSLIP_HEADER_SELECTORS", [
+    'text=/^betslip\\s*\\(\\s*\\d+\\s*\\)$/i',
+  ]),
   confirmationSelectors: selectorList("BET9JA_CONFIRM_SELECTORS", []),
+  successSelectors: selectorList("BET9JA_SUCCESS_SELECTORS", [
+    'text=/^\\s*your\\s+bet\\s+has\\s+been\\s+placed\\.?\\s*$/i',
+    'text=/^\\s*bet\\s+has\\s+been\\s+placed\\.?\\s*$/i',
+    'text=/^\\s*place\\s+another\\s+bet\\s*$/i',
+  ]),
   betReferenceSelectors: selectorList("BET9JA_BET_REFERENCE_SELECTORS", [
     'text=/reference/i',
     'text=/booking\\s*code/i',
@@ -104,6 +123,11 @@ const config = {
   betslipRemoveSelectors: selectorList("BET9JA_BETSLIP_REMOVE_SELECTORS", [
     'button[aria-label*="remove" i]',
     'button[title*="remove" i]',
+    'button[aria-label*="delete" i]',
+    'button[title*="delete" i]',
+    'button[aria-label*="close" i]',
+    'button[title*="close" i]',
+    'button:has-text("×")',
     'text=/^x$/i',
   ]),
   dismissOverlaySelectors: selectorList("BET9JA_DISMISS_OVERLAY_SELECTORS", [
@@ -120,15 +144,61 @@ const browserState = {
   launchedAt: 0,
 };
 
+let unconfirmedBet = null;
+
+class UnconfirmedBetError extends Error {
+  constructor(message, candidate, currentUrl) {
+    super(message);
+    this.name = "UnconfirmedBetError";
+    this.currentSeasonID = candidate?.season_id || "";
+    this.currentRound = candidate?.round || 0;
+    this.currentMatchID = candidate?.match_id || 0;
+    this.currentURL = currentUrl || "";
+  }
+}
+
 async function main() {
   await reportRuntime({ state: "idle", worker_id: workerId, last_error: "" });
   while (true) {
     try {
       const task = await apiRequest("/internal/v1/auto-betting/task");
-      await handleTask(task);
+      if (unconfirmedBet) {
+        await reportRuntime({
+          state: "error",
+          worker_id: workerId,
+          current_season_id: task?.current_season_id || unconfirmedBet.currentSeasonID,
+          current_round: task?.candidate?.round || unconfirmedBet.currentRound,
+          current_match_id: task?.candidate?.match_id || unconfirmedBet.currentMatchID,
+          current_url: unconfirmedBet.currentURL,
+          last_error: unconfirmedBet.message,
+        });
+      } else {
+        await handleTask(task);
+      }
     } catch (error) {
+      if (error instanceof UnconfirmedBetError) {
+        unconfirmedBet = {
+          currentSeasonID: error.currentSeasonID,
+          currentRound: error.currentRound,
+          currentMatchID: error.currentMatchID,
+          currentURL: error.currentURL,
+          message: normalizeError(error),
+        };
+      }
       await closeBrowser().catch(() => undefined);
-      await reportRuntime({ state: "error", worker_id: workerId, last_error: normalizeError(error) });
+      await reportRuntime({
+        state: "error",
+        worker_id: workerId,
+        ...(unconfirmedBet
+          ? {
+              current_season_id: unconfirmedBet.currentSeasonID,
+              current_round: unconfirmedBet.currentRound,
+              current_match_id: unconfirmedBet.currentMatchID,
+              current_url: unconfirmedBet.currentURL,
+            }
+          : {}),
+        last_error: unconfirmedBet?.message || normalizeError(error),
+      });
     }
     await sleep(intervalMs);
   }
@@ -254,14 +324,8 @@ async function ensureBrowser() {
 }
 
 async function hasActiveSession(page) {
-  await maybeDismissOverlays(page);
-  const logoutIndicator = await firstExisting(page, config.logoutIndicators);
-  if (logoutIndicator) return true;
-  const passwordField = await firstExisting(page, config.passwordSelectors);
-  if (passwordField) return false;
-  const loginTrigger = await firstExisting(page, config.loginTriggerSelectors);
-  if (loginTrigger) return false;
-  return false;
+  const snapshot = await inspectSession(page);
+  return isActiveSessionSnapshot(snapshot);
 }
 
 async function login(page, credentials) {
@@ -298,11 +362,15 @@ async function login(page, credentials) {
   if (!submit) {
     throw new Error("Bet9ja login submit button was not found.");
   }
+  const loginUrl = safeUrl(page);
   await clickLocator(submit);
   await waitForPageReady(page);
-  await maybeDismissOverlays(page);
-  if (!(await hasActiveSession(page))) {
-    throw new Error("Bet9ja login did not produce an active session.");
+  const session = await waitForLoginResult(page);
+  if (session.loginFailureIndicator) {
+    throw new Error(`Bet9ja login was rejected. ${await formatLoginDiagnostics(page, credentials, session)}`);
+  }
+  if (!isActiveSessionSnapshot(session, { allowImplicit: true })) {
+    throw new Error(`Bet9ja login did not produce an active session. ${await formatLoginDiagnostics(page, credentials, session, loginUrl)}`);
   }
   await reportRuntime({
     state: "ready",
@@ -311,6 +379,72 @@ async function login(page, credentials) {
     last_login_at: new Date().toISOString(),
     last_heartbeat_at: new Date().toISOString(),
   });
+}
+
+async function inspectSession(page) {
+  const logoutIndicator = await firstVisibleMatch(page, config.logoutIndicators);
+  const usernameField = await firstVisibleMatch(page, config.usernameSelectors);
+  const passwordField = await firstVisibleMatch(page, config.passwordSelectors);
+  const loginTrigger = await firstVisibleMatch(page, config.loginTriggerSelectors);
+  const loginFailureIndicator = await firstVisibleMatch(page, config.loginFailureSelectors);
+  return {
+    logoutIndicator,
+    loginFailureIndicator,
+    loginFormVisible: Boolean(usernameField || passwordField),
+    loginTriggerVisible: Boolean(loginTrigger),
+  };
+}
+
+function isActiveSessionSnapshot(snapshot, { allowImplicit = false } = {}) {
+  if (snapshot.logoutIndicator) return true;
+  if (snapshot.loginFailureIndicator || snapshot.loginFormVisible || snapshot.loginTriggerVisible) return false;
+  return allowImplicit;
+}
+
+async function waitForLoginResult(page) {
+  const deadline = Date.now() + numberEnv("AUTOBET_LOGIN_VERIFICATION_TIMEOUT_MS", 10000, 1000);
+  let snapshot = await inspectSession(page);
+  while (Date.now() < deadline) {
+    if (snapshot.loginFailureIndicator || isActiveSessionSnapshot(snapshot, { allowImplicit: true })) {
+      return snapshot;
+    }
+    await sleep(selectorPollMs);
+    snapshot = await inspectSession(page);
+  }
+  return snapshot;
+}
+
+async function formatLoginDiagnostics(page, credentials, snapshot, loginUrl = "") {
+  const url = safeUrl(page);
+  const [title, bodyText] = await Promise.all([
+    getPageTitle(page),
+    getSanitizedBodyText(page, credentials?.username),
+  ]);
+  const urlChanged = Boolean(loginUrl && url && loginUrl !== url);
+  return [
+    `url=${url || "unknown"}`,
+    `url_changed=${urlChanged}`,
+    `title=${JSON.stringify(title)}`,
+    `authenticated_indicator=${snapshot.logoutIndicator?.selector || "none"}`,
+    `login_form_visible=${snapshot.loginFormVisible}`,
+    `login_trigger_visible=${snapshot.loginTriggerVisible}`,
+    `login_failure_indicator=${snapshot.loginFailureIndicator?.selector || "none"}`,
+    `body=${JSON.stringify(bodyText)}`,
+  ].join(" ");
+}
+
+function getPageTitle(page) {
+  return page.title().then((value) => String(value || "").trim().slice(0, 160)).catch(() => "");
+}
+
+function getSanitizedBodyText(page, username) {
+  return page.locator("body").innerText({ timeout: 1000 }).then((value) => {
+    let text = String(value || "").replace(/\s+/g, " ").trim();
+    if (username) {
+      text = text.split(String(username)).join("[redacted]");
+    }
+    return text.slice(0, 600);
+  }).catch(() => "");
 }
 
 async function resolveCredentials() {
@@ -400,7 +534,8 @@ async function placeCandidate(page, candidate) {
   await shortWait();
   await maybeDismissOverlays(page);
 
-  await fillStake(page, candidate.stake_amount);
+  const betslip = await waitForBetslipSelection(page, candidate);
+  await fillStake(betslip, candidate.stake_amount);
 
   if (dryRun) {
     return {
@@ -410,7 +545,7 @@ async function placeCandidate(page, candidate) {
     };
   }
 
-  const submit = await waitForExisting(page, config.submitSelectors, 10000);
+  const submit = await waitForExisting(betslip, config.submitSelectors, 10000);
   if (!submit) {
     throw new Error("Place bet button was not found.");
   }
@@ -421,6 +556,16 @@ async function placeCandidate(page, candidate) {
   if (confirmation) {
     await clickLocator(confirmation).catch(() => undefined);
     await shortWait();
+  }
+
+  const success = await waitForVisibleExisting(page, config.successSelectors, confirmationTimeoutMs);
+  if (!success) {
+    const diagnostics = await formatBetConfirmationDiagnostics(page);
+    throw new UnconfirmedBetError(
+      "Bet9ja bet outcome is unknown: the success confirmation was not detected after submitting. " + diagnostics,
+      candidate,
+      safeUrl(page),
+    );
   }
 
   const betReference = await readBetReference(page, confirmationTimeoutMs);
@@ -438,7 +583,7 @@ async function findMatchRow(page, candidate) {
   const awayText = page.getByText(awayPattern);
   for (const selector of config.matchRowSelectors) {
     const locator = page.locator(selector).filter({ has: homeText }).filter({ has: awayText }).first();
-    if (await exists(locator)) {
+    if (await isVisible(locator)) {
       await locator.scrollIntoViewIfNeeded().catch(() => undefined);
       return locator;
     }
@@ -456,16 +601,16 @@ async function expandMatchRow(row) {
 async function findOverOnePointFiveOption(row) {
   const scopes = [row, row.locator("xpath=following-sibling::*").first()];
   for (const scope of scopes) {
+    const lineRow = await findTotalGoalsOnePointFiveLine(scope);
+    if (lineRow) {
+      const option = await pricedOptionFromContainer(lineRow);
+      if (option) return option;
+    }
     const direct = await firstExisting(scope, config.overMarketSelectors);
     if (direct) {
       const pricedDirect = await pricedOptionFromContainer(direct);
       if (pricedDirect) return pricedDirect;
       return direct;
-    }
-    const lineRow = await findTotalGoalsOnePointFiveLine(scope);
-    if (lineRow) {
-      const option = await pricedOptionFromContainer(lineRow);
-      if (option) return option;
     }
   }
   return null;
@@ -482,7 +627,7 @@ async function findTotalGoalsOnePointFiveLine(scope) {
       .filter({ hasText: /1[\.,]5/ })
       .filter({ hasText: /over/i })
       .first();
-    if (await exists(locator)) {
+    if (await isVisible(locator)) {
       return locator;
     }
   }
@@ -494,6 +639,7 @@ async function pricedOptionFromContainer(container) {
   const count = await safeCount(oddsTexts);
   for (let index = count - 1; index >= 0; index -= 1) {
     const locator = oddsTexts.nth(index);
+    if (!(await isVisible(locator))) continue;
     const text = (await locator.innerText().catch(() => "")).trim();
     const value = Number(text.replace(/[^\d.]/g, ""));
     if (Number.isFinite(value) && value >= 1) {
@@ -503,8 +649,31 @@ async function pricedOptionFromContainer(container) {
   return null;
 }
 
-async function fillStake(page, stakeAmount) {
-  const stakeField = await waitForExisting(page, config.stakeSelectors, 10000);
+async function waitForBetslipSelection(page, candidate) {
+  const deadline = Date.now() + 10000;
+  while (Date.now() < deadline) {
+    const betslip = await findBetslipScope(page);
+    if (betslip) {
+      const selectedMarket = await firstVisibleMatch(betslip, config.overMarketSelectors);
+      const text = await betslip.innerText().catch(() => "");
+      if (selectedMarket && /over\s*1[\.,]5/i.test(text)) {
+        return betslip;
+      }
+    }
+    await sleep(selectorPollMs);
+  }
+  throw new Error("Bet9ja betslip did not show the selected Over 1.5 market for " + candidate.home_team + " - " + candidate.away_team + ".");
+}
+
+async function findBetslipScope(page) {
+  const header = await firstVisibleMatch(page, config.betslipHeaderSelectors);
+  if (!header) return null;
+  const panel = header.locator("xpath=ancestor::*[.//input and .//button][1]").first();
+  return await isVisible(panel) ? panel : page;
+}
+
+async function fillStake(betslip, stakeAmount) {
+  const stakeField = await waitForExisting(betslip, config.stakeSelectors, 10000);
   if (!stakeField) {
     throw new Error("Stake input was not found after selecting the market.");
   }
@@ -520,12 +689,31 @@ async function fillStake(page, stakeAmount) {
 }
 
 async function clearBetslip(page) {
+  const betslip = await findBetslipScope(page);
+  const scope = betslip || page;
   for (let pass = 0; pass < 5; pass += 1) {
-    const button = await firstExisting(page, config.betslipRemoveSelectors);
-    if (!button) return;
+    const button = await firstExisting(scope, config.betslipRemoveSelectors);
+    if (!button) break;
     await clickLocator(button).catch(() => undefined);
     await sleep(300);
   }
+  const header = await firstVisibleMatch(page, config.betslipHeaderSelectors);
+  if (header) {
+    const text = await header.locator("xpath=..").innerText().catch(() => "");
+    if (/\(\s*[1-9]\d*\s*\)/.test(text)) {
+      throw new Error("Existing Bet9ja betslip could not be cleared safely.");
+    }
+  }
+}
+
+async function formatBetConfirmationDiagnostics(page) {
+  const bodyText = await getSanitizedBodyText(page, "");
+  const submitVisible = Boolean(await firstVisibleMatch(page, config.submitSelectors));
+  return [
+    "url=" + (safeUrl(page) || "unknown"),
+    "submit_visible=" + submitVisible,
+    "body=" + JSON.stringify(bodyText),
+  ].join(" ");
 }
 
 async function readBetReference(page, timeoutMs = 0) {
@@ -533,7 +721,7 @@ async function readBetReference(page, timeoutMs = 0) {
   while (true) {
     for (const selector of config.betReferenceSelectors) {
       const locator = page.locator(selector).first();
-      if (await exists(locator)) {
+      if (await isVisible(locator)) {
         return (await locator.innerText().catch(() => "")).trim();
       }
     }
@@ -584,8 +772,18 @@ async function apiRequest(pathname, init = {}) {
 async function firstExisting(root, selectors) {
   for (const selector of selectors) {
     const locator = root.locator(selector).first();
-    if (await exists(locator)) {
+    if (await isVisible(locator) && await isEnabled(locator)) {
       return locator;
+    }
+  }
+  return null;
+}
+
+async function firstVisibleMatch(root, selectors) {
+  for (const selector of selectors) {
+    const locator = root.locator(selector).first();
+    if (await isVisible(locator)) {
+      return { locator, selector };
     }
   }
   return null;
@@ -601,9 +799,35 @@ async function waitForExisting(root, selectors, timeoutMs) {
   return null;
 }
 
+async function waitForVisibleExisting(root, selectors, timeoutMs) {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    const match = await firstVisibleMatch(root, selectors);
+    if (match) return match.locator;
+    await sleep(selectorPollMs);
+  }
+  return null;
+}
+
 async function exists(locator) {
   try {
     return await locator.count() > 0;
+  } catch {
+    return false;
+  }
+}
+
+async function isVisible(locator) {
+  try {
+    return await locator.isVisible();
+  } catch {
+    return false;
+  }
+}
+
+async function isEnabled(locator) {
+  try {
+    return await locator.isEnabled();
   } catch {
     return false;
   }
@@ -774,7 +998,7 @@ async function selectAll(locator) {
 
 async function clickableAncestor(locator) {
   const candidate = locator.locator("xpath=ancestor-or-self::button | ancestor-or-self::*[@role='button']").first();
-  return await exists(candidate) ? candidate : locator;
+  return await isVisible(candidate) && await isEnabled(candidate) ? candidate : locator;
 }
 
 function normalizeNumeric(value) {

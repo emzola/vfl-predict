@@ -84,7 +84,7 @@ services:
       INTERNAL_API_TOKEN: ${INTERNAL_API_TOKEN:?Set INTERNAL_API_TOKEN in an untracked .env file or the shell}
       DEBUG: ${AUTOBET_DEBUG:-}
       AUTOBET_INTERVAL_SECONDS: ${AUTOBET_INTERVAL_SECONDS:-10}
-      AUTOBET_HEADLESS: ${AUTOBET_HEADLESS:-true}
+      AUTOBET_HEADLESS: ${AUTOBET_HEADLESS:-false}
       AUTOBET_DRY_RUN: ${AUTOBET_DRY_RUN:-true}
       # Credentials are API-backed; use an ephemeral profile to avoid cross-container Chromium locks.
       AUTOBET_USER_DATA_DIR: /tmp/autobet-browser
@@ -92,6 +92,8 @@ services:
       BET9JA_VFL_TOURNAMENT_NAME: ${BET9JA_VFL_TOURNAMENT_NAME:-Euro League}
       BET9JA_USERNAME: ${BET9JA_USERNAME:-}
       BET9JA_PASSWORD: ${BET9JA_PASSWORD:-}
+      BET9JA_BETSLIP_HEADER_SELECTORS: ${BET9JA_BETSLIP_HEADER_SELECTORS:-}
+      BET9JA_SUCCESS_SELECTORS: ${BET9JA_SUCCESS_SELECTORS:-}
     depends_on:
       api:
         condition: service_healthy
