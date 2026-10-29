@@ -10,6 +10,7 @@ import (
 	"syscall"
 	"time"
 
+	"bet9ja-vfl/services/autobet"
 	"bet9ja-vfl/services/ingest"
 	"bet9ja-vfl/services/settlement"
 )
@@ -43,6 +44,7 @@ func main() {
 	repo := ingest.NewRepository(db)
 	ownerID := fmt.Sprintf("settlement-worker-%d", os.Getpid())
 	settler := settlement.NewSettler(db)
+	autoBetService := autobet.NewService(db)
 	cycle := func() {
 		token, acquired, leaseErr := repo.AcquireLease(ctx, "settlement-worker", ownerID, 4*time.Minute)
 		if leaseErr != nil || !acquired {
@@ -53,6 +55,7 @@ func main() {
 		if settleErr != nil {
 			return
 		}
+		_, _ = autoBetService.Settle(ctx)
 		encoded, _ := json.Marshal(report)
 		fmt.Println(string(encoded))
 	}

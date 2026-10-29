@@ -139,6 +139,7 @@ func TestPhase4DashboardDataIntegration(t *testing.T) {
 		"/api/v1/performance",
 		"/api/v1/paper-testing",
 		"/api/v1/operations",
+			"/api/v1/auto-betting",
 		"/api/v1/settings",
 		"/api/v1/auth/sessions",
 	} {
@@ -149,6 +150,10 @@ func TestPhase4DashboardDataIntegration(t *testing.T) {
 	if patch.Code != http.StatusOK {
 		t.Fatalf("PATCH /api/v1/settings status=%d body=%s", patch.Code, patch.Body.String())
 	}
+		patch = authenticatedJSONRequest(t, server, http.MethodPatch, "/api/v1/auto-betting", `{"enabled":true,"base_stake":5000}`, session.Cookies, csrfCookieValue(session.Cookies), "http://localhost:3000")
+		if patch.Code != http.StatusOK {
+			t.Fatalf("PATCH /api/v1/auto-betting status=%d body=%s", patch.Code, patch.Body.String())
+		}
 
 	history := assertJSON("/api/v1/dashboard/history", http.StatusOK)
 	if values, ok := history["predictions"].([]any); !ok || len(values) == 0 {

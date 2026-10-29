@@ -72,9 +72,34 @@ services:
     networks:
       - private
 
+  auto-betting-worker:
+    build:
+      context: ../../apps/auto-betting-worker
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    environment:
+      INTERNAL_API_BASE_URL: http://api:8090
+      INTERNAL_API_TOKEN: ${INTERNAL_API_TOKEN:?Set INTERNAL_API_TOKEN in an untracked .env file or the shell}
+      AUTOBET_INTERVAL_SECONDS: ${AUTOBET_INTERVAL_SECONDS:-30}
+      AUTOBET_HEADLESS: ${AUTOBET_HEADLESS:-true}
+      AUTOBET_DRY_RUN: ${AUTOBET_DRY_RUN:-true}
+      AUTOBET_USER_DATA_DIR: /ms-playwright-data
+      BET9JA_VIRTUAL_URL: ${BET9JA_VIRTUAL_URL:-https://virtual.bet9ja.com/virtual/}
+      BET9JA_VFL_TOURNAMENT_NAME: ${BET9JA_VFL_TOURNAMENT_NAME:-Euro League}
+      BET9JA_USERNAME: ${BET9JA_USERNAME:-}
+      BET9JA_PASSWORD: ${BET9JA_PASSWORD:-}
+    depends_on:
+      api:
+        condition: service_healthy
+    volumes:
+      - auto-betting-browser-data:/ms-playwright-data
+    networks:
+      - private
+
 networks:
   private:
     driver: bridge
 
 volumes:
   postgres-data:
+  auto-betting-browser-data:

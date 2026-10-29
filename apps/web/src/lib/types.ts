@@ -178,3 +178,91 @@ export type Metric = {
   sample_count: number;
   promotion_status?: string;
 };
+
+export type AutoBettingSettings = {
+  enabled: boolean;
+  base_stake: number;
+  profit_target: number;
+  minimum_odds: number;
+  updated_at: string;
+};
+
+export type AutoBettingRuntime = {
+  state: string;
+  worker_id?: string;
+  current_season_id?: string;
+  current_round?: number;
+  current_match_id?: number;
+  current_url?: string;
+  last_heartbeat_at?: string;
+  last_login_at?: string;
+  last_error?: string;
+  updated_at: string;
+};
+
+export type AutoBettingSeasonSummary = {
+  season_id?: string;
+  total_staked: number;
+  total_returned: number;
+  total_profit: number;
+  bets_placed: number;
+  bets_won: number;
+  bets_lost: number;
+  bets_skipped: number;
+  pending_settlements: number;
+  paused: boolean;
+  pause_reason?: string;
+  next_stake: number;
+  active_pending_stake: number;
+  profit_target: number;
+  profit_target_reached: boolean;
+};
+
+export type AutoBettingCandidate = {
+  season_id: string;
+  round: number;
+  prediction_run_id: string;
+  prediction_revision_id: string;
+  match_id: number;
+  home_team: string;
+  away_team: string;
+  scheduled_at: string;
+  status: string;
+  decision_rank: number;
+  decision_basis: string;
+  decision_outcome: string;
+  decision_probability: number;
+  decision_market_difference?: number;
+  point_in_time_verified: boolean;
+  odds_observed_at?: string;
+  stake_amount: number;
+  minimum_odds: number;
+};
+
+export type AutoBettingRoundRecord = {
+  season_id: string;
+  round: number;
+  status: string;
+  home_team: string;
+  away_team: string;
+  stake_amount: number;
+  minimum_odds: number;
+  quoted_odds?: number;
+  potential_return?: number;
+  realized_return?: number;
+  realized_profit?: number;
+  skip_reason?: string;
+  bet_reference?: string;
+  placed_at?: string;
+  settled_at?: string;
+  created_at: string;
+};
+
+export type AutoBettingState = {
+  settings: AutoBettingSettings;
+  runtime: AutoBettingRuntime;
+  current_season_id?: string;
+  season_summary?: AutoBettingSeasonSummary;
+  next_candidate?: AutoBettingCandidate;
+  recent_rounds: AutoBettingRoundRecord[];
+};

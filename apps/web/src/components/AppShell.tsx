@@ -13,6 +13,7 @@ const navigation = [
   { href: "/dashboard/performance", label: "Performance" },
   { href: "/dashboard/paper-testing", label: "Paper testing" },
   { href: "/dashboard/operations", label: "Operations" },
+  { href: "/dashboard/auto-betting", label: "Auto betting" },
   { href: "/dashboard/settings", label: "Settings" },
 ];
 

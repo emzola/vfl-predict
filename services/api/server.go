@@ -47,6 +47,10 @@ func (s *Server) Handler() http.Handler {
 	internal.HandleFunc("/internal/v1/metrics/models", s.modelMetrics)
 	internal.HandleFunc("/internal/v1/metrics/forward", s.forwardMetrics)
 	internal.HandleFunc("/internal/v1/health/feed", s.feedHealth)
+	internal.HandleFunc("/internal/v1/auto-betting/task", s.autoBettingInternalTask)
+	internal.HandleFunc("/internal/v1/auto-betting/runtime", s.autoBettingInternalRuntime)
+	internal.HandleFunc("/internal/v1/auto-betting/rounds/{seasonId}/{round}/skip", s.autoBettingInternalSkip)
+	internal.HandleFunc("/internal/v1/auto-betting/rounds/{seasonId}/{round}/placed", s.autoBettingInternalPlaced)
 	root.Handle("/internal/v1/", s.guard(internal))
 
 	root.HandleFunc("/api/v1/auth/request-link", s.requestMagicLink)
@@ -71,6 +75,7 @@ func (s *Server) Handler() http.Handler {
 	root.Handle("/api/v1/paper-testing", authenticated(http.HandlerFunc(s.paperTestingAPI)))
 	root.Handle("/api/v1/operations", authenticated(http.HandlerFunc(s.operationsAPI)))
 	root.Handle("/api/v1/settings", authenticated(http.HandlerFunc(s.settingsAPI)))
+	root.Handle("/api/v1/auto-betting", authenticated(http.HandlerFunc(s.autoBettingAPI)))
 	root.HandleFunc("/api/v1/system/health", s.systemHealth)
 	return s.securityHeaders(root)
 }
@@ -90,10 +95,6 @@ func (s *Server) securityHeaders(next http.Handler) http.Handler {
 
 func (s *Server) guard(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Method != http.MethodGet {
-			writeError(w, http.StatusMethodNotAllowed, "GET only")
-			return
-		}
 		if s.InternalToken != "" {
 			if !constantTimeEqual(r.Header.Get("X-Internal-Token"), s.InternalToken) {
 				writeError(w, http.StatusUnauthorized, "internal access token required")
@@ -138,6 +139,10 @@ func (s *Server) now() time.Time {
 }
 
 func (s *Server) current(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		writeError(w, http.StatusMethodNotAllowed, "method not allowed")
+		return
+	}
 	if s.DB == nil {
 		writeError(w, http.StatusServiceUnavailable, "database is unavailable")
 		return
@@ -183,6 +188,10 @@ ORDER BY earliest_kickoff_at LIMIT 1`, result.SeasonID).Scan(&round)
 }
 
 func (s *Server) upcoming(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		writeError(w, http.StatusMethodNotAllowed, "method not allowed")
+		return
+	}
 	if s.DB == nil {
 		writeError(w, http.StatusServiceUnavailable, "database is unavailable")
 		return
@@ -228,6 +237,10 @@ ORDER BY f.scheduled_at, f.match_id LIMIT 64`)
 
 func (s *Server) predictions(status string) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet {
+			writeError(w, http.StatusMethodNotAllowed, "method not allowed")
+			return
+		}
 		if s.DB == nil {
 			writeError(w, http.StatusServiceUnavailable, "database is unavailable")
 			return
@@ -254,6 +267,10 @@ WHERE run.status = $1 ORDER BY run.prediction_as_of DESC, pr.match_id`, status)
 }
 
 func (s *Server) predictionHistory(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		writeError(w, http.StatusMethodNotAllowed, "method not allowed")
+		return
+	}
 	if s.DB == nil {
 		writeError(w, http.StatusServiceUnavailable, "database is unavailable")
 		return
@@ -282,6 +299,10 @@ FROM prediction_runs ORDER BY prediction_as_of DESC LIMIT 200`)
 }
 
 func (s *Server) modelMetrics(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		writeError(w, http.StatusMethodNotAllowed, "method not allowed")
+		return
+	}
 	queryMetrics(w, r, s.DB, `
 SELECT backtest_run_id::text, model_definition_id, scope_type, COALESCE(scope_season_id, ''),
        COALESCE(scope_round_no, 0), COALESCE(market_key, ''), metric_key, metric_value,
@@ -290,6 +311,10 @@ FROM evaluation_metrics ORDER BY backtest_run_id, model_definition_id, scope_typ
 }
 
 func (s *Server) forwardMetrics(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		writeError(w, http.StatusMethodNotAllowed, "method not allowed")
+		return
+	}
 	queryMetrics(w, r, s.DB, `
 SELECT forward_result_id::text, prediction_run_id::text, season_id, round_no, market_key,
        metric_key, metric_value, sample_count, eligible_odds_count, odds_policy
@@ -333,6 +358,10 @@ func queryMetrics(w http.ResponseWriter, r *http.Request, db *sql.DB, query stri
 }
 
 func (s *Server) feedHealth(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		writeError(w, http.StatusMethodNotAllowed, "method not allowed")
+		return
+	}
 	if s.DB == nil {
 		writeError(w, http.StatusServiceUnavailable, "database is unavailable")
 		return
