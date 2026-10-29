@@ -962,21 +962,26 @@ function normalizeNumeric(value) {
   return String(value || "").replace(/[^\d.]/g, "");
 }
 
-// bet9ja-fixes.mjs - drop-in replacements for index.mjs
+// ---------- Euro League (vflm) market selection ----------
 //
-// HOW TO APPLY
-//   1. In index.mjs delete these functions: extractQuotedOdds, findMatchRow, expandMatchRow,
-//      findOverOnePointFiveOption, findTotalGoalsOnePointFiveLine, pricedOptionFromContainer,
-//      waitForBetslipSelection, findBetslipScope, clearBetslip, placeCandidate.
-//   2. Paste this whole file's contents anywhere above the final `main().catch(...)` call.
-//
-// Written from screenshots only. The selectors are structure-agnostic (they key off visible text and
-// geometry, not class names) but have NOT been run against the live DOM.
+// DOM layout (checked against the live page, Euro League / product=vflm):
+//   - Match table + betslip live in the frame vgstaticassetslive-vs001.akamaized.net/.../initializer/...
+//   - Video, results, league table and the betting countdown live in vflive-vs001.akamaized.net/vflm/...
+//   - Each match is div.sr-matchRow; names are span.sr-home / span.sr-away (the badge <img> shares the class).
+//   - The "+21" expander is .sr-additional-markets a; expanded markets render inside the same .sr-matchRow.
+//   - Odds buttons are a.sr-oddsButton with a Sportradar market id in data-name, price in span.sr-odd:
+//       /18/12?total=1.5  Total Goals over 1.5        <- the market we want
+//       /19/12?total=1.5  Home Total Goals over 1.5
+//       /20/12?total=1.5  Away Total Goals over 1.5
+//       /68/12?total=1.5  1st half total over 1.5
+//     When a match's main Total Goals line is 1.5, that button is in the row itself; otherwise it is in the
+//     expanded panel. The same selector covers both cases.
+//   - Betslip internals (selection card, stake input, Place bet button) were NOT inspected.
 
-const OVER_15_BAR = /^\s*over\s*1[.,]5\s*\d+[.,]\d{2}\s*$/i; // the green bar: "over 1.5 ..... 1.30"
-const EXPANDER = /^\s*\+\s*\d{1,3}\s*$/; // the "+21" button on each match row
-const ROW_EXPANDER = /(?:^|\s)\+\d{1,3}(?:\s|$)/; // same, as a substring test (excludes "(+0.75)")
-const TIMER = 'text=/^\\s*\\d{1,2}:\\d{2}\\s*$/'; // "02:00" betting countdown
+const OVER_15 = 'a.sr-oddsButton[data-name$="/18/12?total=1.5"]';
+// The countdown is span.countdown_amount. A generic mm:ss text selector also matches the video player's
+// span.fp-elapsed / span.fp-remaining and can return the wrong time.
+const TIMER = ".countdown_amount";
 const minSecondsLeft = numberEnv("AUTOBET_MIN_SECONDS_LEFT", 20, 0);
 const verifyRound = /^true$/i.test(process.env.BET9JA_VERIFY_ROUND || "false");
 
@@ -987,10 +992,14 @@ function extractQuotedOdds(text) {
   return matches.length > 0 ? matches[matches.length - 1] : undefined;
 }
 
-// Strips the "over 1.5" label first, so "over 1.51.30" (label and price in sibling spans) still reads 1.30.
+// The price is in span.sr-odd. The button's full text is "over 1.51.15" (label + price), so read the span when
+// present; otherwise (main-row buttons hold only the price) fall back to the button text.
 async function readOptionOdds(option) {
-  const raw = String((await option.textContent().catch(() => "")) || "");
-  return extractQuotedOdds(raw.replace(/^\s*over\s*1[.,]5/i, " "));
+  const odd = option.locator(".sr-odd").first();
+  const raw = (await safeCount(odd))
+    ? await odd.textContent().catch(() => "")
+    : String((await option.textContent().catch(() => "")) || "").replace(/^\s*over\s*1[.,]5/i, " ");
+  return extractQuotedOdds(String(raw || ""));
 }
 
 async function readBetslipOdds(betslip) {
@@ -1024,60 +1033,43 @@ async function waitUntil(predicate, timeoutMs) {
 
 // ---------- match row + Over 1.5 ----------
 
-// Team names also appear in the results list (top) and in the betslip card. Only the real table row also
-// contains the "+21" expander, so requiring it keeps the other two out. .last() = innermost matching element.
-async function findMatchRow(page, candidate) {
-  const home = new RegExp(escapeRegExp(candidate.home_team), "i");
-  const away = new RegExp(escapeRegExp(candidate.away_team), "i");
-  for (const root of searchRoots(page)) {
-    for (const tag of ["tr", "[role='row']", "div", "li"]) {
-      const rows = root.locator(tag).filter({ hasText: home }).filter({ hasText: away }).filter({ hasText: ROW_EXPANDER });
-      if (!(await safeCount(rows))) continue;
-      const row = rows.last();
-      if (!(await isVisible(row))) continue;
-      await row.scrollIntoViewIfNeeded().catch(() => undefined);
-      return row;
-    }
+// The match table lives in its own iframe; it is the only frame that contains div.sr-matchRow.
+async function bettingFrame(page) {
+  for (const frame of page.frames()) {
+    if (await safeCount(frame.locator(".sr-matchRow"))) return frame;
   }
   return null;
 }
 
+function exactText(value) {
+  return new RegExp(`^\\s*${escapeRegExp(value)}\\s*$`, "i");
+}
+
+// span.sr-home / span.sr-away: the badge <img> carries the same class, so the tag matters.
+async function findMatchRow(page, candidate) {
+  const frame = await bettingFrame(page);
+  if (!frame) return null;
+  const rows = frame
+    .locator(".sr-matchRow")
+    .filter({ has: frame.locator("span.sr-home", { hasText: exactText(candidate.home_team) }) })
+    .filter({ has: frame.locator("span.sr-away", { hasText: exactText(candidate.away_team) }) });
+  if ((await safeCount(rows)) !== 1) return null;
+  await rows.scrollIntoViewIfNeeded().catch(() => undefined);
+  return rows;
+}
+
 async function expandMatchRow(row) {
-  const expander = row.getByText(EXPANDER).last();
+  const expander = row.locator(".sr-additional-markets a").first();
   if (!(await isVisible(expander))) return false;
   await clickLocator(expander).catch(() => undefined);
   await shortWait();
   return true;
 }
 
-// The expanded panel renders directly below its row. Pick the nearest "over 1.5" bar below the row, and
-// reject it if another row's "+NN" button sits between (that bar belongs to a different, expanded row).
-async function findOverOnePointFiveOption(page, row) {
-  const rowBox = await row.boundingBox().catch(() => null);
-  if (!rowBox) return null;
-  const rowBottom = rowBox.y + rowBox.height - 2;
-  let best = null;
-  for (const root of searchRoots(page)) {
-    const expanderBoxes = [];
-    const expanders = root.getByText(EXPANDER);
-    const expanderCount = await safeCount(expanders);
-    for (let i = 0; i < expanderCount; i += 1) {
-      const box = await expanders.nth(i).boundingBox().catch(() => null);
-      if (box) expanderBoxes.push(box);
-    }
-    const bars = root.getByText(OVER_15_BAR);
-    const barCount = await safeCount(bars);
-    for (let i = 0; i < barCount; i += 1) {
-      const bar = bars.nth(i);
-      if (!(await isVisible(bar))) continue;
-      const box = await bar.boundingBox().catch(() => null);
-      if (!box || box.y < rowBottom) continue;
-      if (expanderBoxes.some((e) => e.y > rowBottom && e.y < box.y)) continue;
-      const distance = box.y - rowBox.y;
-      if (!best || distance < best.distance) best = { bar, distance };
-    }
-  }
-  return best ? best.bar : null;
+// Market 18 / outcome 12 / total=1.5 = Total Goals over 1.5. Never matches Home (19) or Away (20) totals.
+async function findOverOnePointFiveOption(_page, row) {
+  const button = row.locator(OVER_15).first();
+  return (await isVisible(button)) ? button : null;
 }
 
 async function locateOverMarket(page, candidate) {
@@ -1105,15 +1097,11 @@ async function locateOverMarket(page, candidate) {
 
 // ---------- betslip ----------
 
-// Smallest element holding the "Betslip (n)" tab AND either "Ticket stake" or "No selection": the whole
-// right-hand panel (items, stake box, Place bet button).
+// The betslip panel (header "Betslip (n)", selections, stake, Place bet) is form.sr-bs-container.
 async function findBetslipScope(page) {
-  for (const root of searchRoots(page)) {
-    const panel = root
-      .locator("div, section, aside")
-      .filter({ has: root.getByText(/^\s*betslip\s*\(\s*\d+\s*\)\s*$/i) })
-      .filter({ hasText: /ticket\s*stake|no\s*selection/i })
-      .last();
+  const frame = (await bettingFrame(page)) || page;
+  for (const root of searchRoots(frame)) {
+    const panel = root.locator("form.sr-bs-container").first();
     if (await isVisible(panel)) return panel;
   }
   return null;
@@ -1173,7 +1161,13 @@ async function waitForBetslipSelection(page, candidate) {
     if (betslip) {
       lastText = String((await betslip.innerText().catch(() => "")) || "").replace(/\s+/g, " ");
       const count = (lastText.match(/betslip\s*\(\s*(\d+)\s*\)/i) || [])[1];
-      if (count === "1" && teams.test(lastText) && /over\s*1[.,]5/i.test(lastText)) {
+      const isPlainTotalOver15 = /total goals\s*over\s*1[.,]5/i.test(lastText) && !/(home|away)\s+total goals/i.test(lastText);
+      if (count === "1" && teams.test(lastText) && !isPlainTotalOver15 && /over\s*1[.,]5/i.test(lastText)) {
+        // Wrong market in the slip (e.g. Home Total Goals over 1.5). Never stake it.
+        await clearBetslip(page).catch(() => undefined);
+        throw new Error(`Betslip holds the wrong market (expected Total Goals over 1.5): ${JSON.stringify(lastText.slice(0, 300))}`);
+      }
+      if (count === "1" && teams.test(lastText) && isPlainTotalOver15) {
         if (verifyRound && roundPattern && !roundPattern.test(lastText)) {
           await clearBetslip(page).catch(() => undefined);
           throw new Error(`Betslip is for a different season/matchday than ${candidate.season_id} round ${candidate.round}: ${JSON.stringify(lastText.slice(0, 300))}`);
