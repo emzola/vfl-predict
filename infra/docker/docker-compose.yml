@@ -86,7 +86,8 @@ services:
       AUTOBET_INTERVAL_SECONDS: ${AUTOBET_INTERVAL_SECONDS:-10}
       AUTOBET_HEADLESS: ${AUTOBET_HEADLESS:-true}
       AUTOBET_DRY_RUN: ${AUTOBET_DRY_RUN:-true}
-      AUTOBET_USER_DATA_DIR: /ms-playwright-data
+      # Credentials are API-backed; use an ephemeral profile to avoid cross-container Chromium locks.
+      AUTOBET_USER_DATA_DIR: /tmp/autobet-browser
       BET9JA_VIRTUAL_URL: ${BET9JA_VIRTUAL_URL:-https://virtual.bet9ja.com/virtual/}
       BET9JA_VFL_TOURNAMENT_NAME: ${BET9JA_VFL_TOURNAMENT_NAME:-Euro League}
       BET9JA_USERNAME: ${BET9JA_USERNAME:-}
@@ -94,8 +95,6 @@ services:
     depends_on:
       api:
         condition: service_healthy
-    volumes:
-      - auto-betting-browser-data:/ms-playwright-data
     networks:
       - private
 
@@ -105,4 +104,3 @@ networks:
 
 volumes:
   postgres-data:
-  auto-betting-browser-data:

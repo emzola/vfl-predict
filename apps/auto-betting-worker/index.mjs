@@ -15,7 +15,10 @@ const fallbackUsername = process.env.BET9JA_USERNAME || "";
 const fallbackPassword = process.env.BET9JA_PASSWORD || "";
 const headless = false;
 const dryRun = /^true$/i.test(process.env.AUTOBET_DRY_RUN || "false");
-const userDataDir = process.env.AUTOBET_USER_DATA_DIR || path.join("/tmp", "autobet-browser");
+const userDataRoot = process.env.AUTOBET_USER_DATA_DIR || path.join("/tmp", "autobet-browser");
+// Credentials are stored by the API; use a unique profile per worker process
+// so a stale Chromium lock from another container cannot block launch.
+const userDataDir = path.join(userDataRoot, `worker-${os.hostname()}-${process.pid}-${Date.now()}`);
 const navigationTimeoutMs = numberEnv("AUTOBET_NAVIGATION_TIMEOUT_MS", 30000, 5000);
 const actionTimeoutMs = numberEnv("AUTOBET_ACTION_TIMEOUT_MS", 10000, 1000);
 const pageReadyTimeoutMs = numberEnv("AUTOBET_PAGE_READY_TIMEOUT_MS", 20000, 5000);
