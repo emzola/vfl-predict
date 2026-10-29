@@ -245,6 +245,7 @@ services:
       AUTOBET_INTERVAL_SECONDS: ${AUTOBET_INTERVAL_SECONDS:-10}
       AUTOBET_HEADLESS: ${AUTOBET_HEADLESS:-false}
       AUTOBET_DRY_RUN: ${AUTOBET_DRY_RUN:-false}
+      AUTOBET_PAGE_READY_TIMEOUT_MS: ${AUTOBET_PAGE_READY_TIMEOUT_MS:-60000}
       # Credentials are API-backed; use an ephemeral profile to avoid cross-container Chromium locks.
       AUTOBET_USER_DATA_DIR: /tmp/autobet-browser
       BET9JA_VIRTUAL_URL: ${BET9JA_VIRTUAL_URL:-https://virtual.bet9ja.com/virtual/}

@@ -23,7 +23,7 @@ const userDataRoot = process.env.AUTOBET_USER_DATA_DIR || path.join("/tmp", "aut
 const userDataDir = path.join(userDataRoot, `worker-${os.hostname()}-${process.pid}-${Date.now()}`);
 const navigationTimeoutMs = numberEnv("AUTOBET_NAVIGATION_TIMEOUT_MS", 30000, 5000);
 const actionTimeoutMs = numberEnv("AUTOBET_ACTION_TIMEOUT_MS", 10000, 1000);
-const pageReadyTimeoutMs = numberEnv("AUTOBET_PAGE_READY_TIMEOUT_MS", 20000, 5000);
+const pageReadyTimeoutMs = numberEnv("AUTOBET_PAGE_READY_TIMEOUT_MS", 60000, 5000);
 const confirmationTimeoutMs = numberEnv("AUTOBET_CONFIRMATION_TIMEOUT_MS", 10000, 1000);
 const shortDelayMs = numberEnv("AUTOBET_SHORT_WAIT_MS", 1500, 100);
 const selectorPollMs = numberEnv("AUTOBET_SELECTOR_POLL_MS", 400, 100);
@@ -1082,6 +1082,7 @@ async function formatPageRenderDiagnostics(page) {
     `url=${safeUrl(page) || "unknown"}`,
     `title=${JSON.stringify(title)}`,
     `ready_state=${readyState}`,
+    `render_timeout_ms=${pageReadyTimeoutMs}`,
     `frames=${JSON.stringify(frameUrls(page))}`,
     `body_html_lengths=${JSON.stringify(htmlLengths)}`,
     `body=${JSON.stringify(bodyText)}`,
