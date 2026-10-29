@@ -616,63 +616,45 @@ func (s *Service) nextCandidate(ctx context.Context, seasonID string, settings S
 	if !settings.Enabled || summary.Paused || summary.PendingSettlements > 0 {
 		return nil, nil
 	}
-	var runID string
-	err := s.DB.QueryRowContext(ctx, `
-SELECT run.prediction_run_id::text
-FROM prediction_runs run
-WHERE run.season_id = $1
-  AND run.status = 'frozen'
-  AND run.generated_fixture_count = 8
-  AND run.earliest_kickoff_at > $2
-  AND NOT EXISTS (
-      SELECT 1
-      FROM auto_betting_rounds r
-      WHERE r.season_id = run.season_id AND r.round_no = run.round_no
-  )
-ORDER BY run.earliest_kickoff_at, run.prediction_as_of DESC
-LIMIT 1`, seasonID, s.now()).Scan(&runID)
-	if errors.Is(err, sql.ErrNoRows) {
-		return nil, nil
-	}
+	currentRound, err := s.currentUpcomingRound(ctx, seasonID)
 	if err != nil {
 		return nil, err
 	}
-	return s.rankedCandidateForRun(ctx, runID, settings, summary.NextStake)
+	if currentRound == 0 {
+		return nil, nil
+	}
+	var exists bool
+	if err := s.DB.QueryRowContext(ctx, `SELECT EXISTS (SELECT 1 FROM auto_betting_rounds WHERE season_id = $1 AND round_no = $2)`, seasonID, currentRound).Scan(&exists); err != nil {
+		return nil, err
+	}
+	if exists {
+		return nil, nil
+	}
+	return s.canonicalCandidateForRound(ctx, seasonID, currentRound, settings, summary.NextStake)
 }
 
 func (s *Service) candidateForRound(ctx context.Context, seasonID string, round int, settings Settings, summary SeasonSummary) (*Candidate, error) {
-	var runID string
-	err := s.DB.QueryRowContext(ctx, `
-SELECT prediction_run_id::text
-FROM prediction_runs
-WHERE season_id = $1
-  AND round_no = $2
-  AND status = 'frozen'
-  AND generated_fixture_count = 8
-ORDER BY prediction_as_of DESC
-LIMIT 1`, seasonID, round).Scan(&runID)
-	if errors.Is(err, sql.ErrNoRows) {
-		return nil, nil
-	}
-	if err != nil {
-		return nil, err
-	}
-	return s.rankedCandidateForRun(ctx, runID, settings, summary.NextStake)
+	return s.canonicalCandidateForRound(ctx, seasonID, round, settings, summary.NextStake)
 }
 
-func (s *Service) rankedCandidateForRun(ctx context.Context, runID string, settings Settings, stake float64) (*Candidate, error) {
+func (s *Service) canonicalCandidateForRound(ctx context.Context, seasonID string, round int, settings Settings, stake float64) (*Candidate, error) {
 	rows, err := s.DB.QueryContext(ctx, `
-SELECT run.prediction_run_id::text, pr.prediction_revision_id::text, run.season_id, run.round_no,
+SELECT DISTINCT ON (p.season_id, p.round_no, pr.match_id)
+       p.prediction_run_id::text, pr.prediction_revision_id::text, p.season_id, p.round_no,
        pr.match_id, ht.name, at.name, f.scheduled_at, pr.status,
        pr.home_probability::double precision, pr.draw_probability::double precision, pr.away_probability::double precision,
        pr.probability_payload, pr.point_in_time_verified, pr.odds_observed_at
-FROM prediction_runs run
-JOIN prediction_revisions pr ON pr.prediction_run_id = run.prediction_run_id
+FROM prediction_runs p
+JOIN prediction_revisions pr ON pr.prediction_run_id = p.prediction_run_id
 JOIN fixtures f ON f.match_id = pr.match_id
 JOIN teams ht ON ht.team_uid = f.home_team_uid
 JOIN teams at ON at.team_uid = f.away_team_uid
-WHERE run.prediction_run_id = $1::uuid
-ORDER BY f.scheduled_at, pr.match_id`, runID)
+WHERE p.season_id = $1
+  AND p.round_no = $2
+  AND p.status = 'frozen'
+  AND p.generated_fixture_count = 8
+ORDER BY p.season_id, p.round_no, pr.match_id,
+         p.prediction_as_of DESC, pr.revision_no DESC`, seasonID, round)
 	if err != nil {
 		return nil, err
 	}
@@ -729,6 +711,23 @@ ORDER BY f.scheduled_at, pr.match_id`, runID)
 		StakeAmount:              stake,
 		MinimumOdds:              settings.MinimumOdds,
 	}, nil
+}
+
+func (s *Service) currentUpcomingRound(ctx context.Context, seasonID string) (int, error) {
+	var round int
+	err := s.DB.QueryRowContext(ctx, `
+SELECT round_no
+FROM round_states
+WHERE season_id = $1
+  AND state NOT IN ('settled', 'missed_cutoff')
+  AND earliest_kickoff_at IS NOT NULL
+  AND earliest_kickoff_at >= $2
+ORDER BY round_no
+LIMIT 1`, seasonID, s.now()).Scan(&round)
+	if errors.Is(err, sql.ErrNoRows) {
+		return 0, nil
+	}
+	return round, err
 }
 
 func rankPredictions(items []predictionRow) []rankedPrediction {
