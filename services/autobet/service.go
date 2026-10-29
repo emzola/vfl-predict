@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"math"
 	"sort"
 	"strings"
 	"time"
@@ -164,6 +165,7 @@ type probability struct {
 }
 
 type bookmakerPayload struct {
+	Implied         probability `json:"implied"`
 	ModelDifference probability `json:"model_difference"`
 }
 
@@ -195,6 +197,32 @@ type rankedPrediction struct {
 	DecisionProbability      float64
 	DecisionMarketDifference *float64
 	originalIndex            int
+}
+
+func applyPredictionPayload(item *predictionRow, payload []byte) {
+	if item == nil || len(payload) == 0 {
+		return
+	}
+	var decoded predictionPayload
+	if json.Unmarshal(payload, &decoded) != nil || decoded.Bookmaker == nil {
+		return
+	}
+	item.Bookmaker = decoded.Bookmaker
+	if hasFiniteImplied(decoded.Bookmaker.Implied) {
+		item.Bookmaker.ModelDifference = probability{
+			Home: item.Probability.Home - decoded.Bookmaker.Implied.Home,
+			Draw: item.Probability.Draw - decoded.Bookmaker.Implied.Draw,
+			Away: item.Probability.Away - decoded.Bookmaker.Implied.Away,
+		}
+	}
+}
+
+func hasFiniteImplied(value probability) bool {
+	return isFinite(value.Home) && isFinite(value.Draw) && isFinite(value.Away)
+}
+
+func isFinite(value float64) bool {
+	return !math.IsNaN(value) && !math.IsInf(value, 0)
 }
 
 func (s *Service) ensureRows(ctx context.Context) error {
@@ -675,12 +703,7 @@ ORDER BY p.season_id, p.round_no, pr.match_id,
 			value := oddsAt.Time.UTC()
 			item.OddsObservedAt = &value
 		}
-		if len(payload) > 0 {
-			var decoded predictionPayload
-			if json.Unmarshal(payload, &decoded) == nil {
-				item.Bookmaker = decoded.Bookmaker
-			}
-		}
+		applyPredictionPayload(&item, payload)
 		predictions = append(predictions, item)
 	}
 	if err := rows.Err(); err != nil {

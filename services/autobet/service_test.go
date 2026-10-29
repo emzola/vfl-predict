@@ -1,6 +1,10 @@
 package autobet
 
-import "testing"
+import (
+	"encoding/json"
+	"math"
+	"testing"
+)
 
 func TestRankPredictionsPrefersPositiveMarketDifference(t *testing.T) {
 	items := []predictionRow{
@@ -46,6 +50,53 @@ func TestRankPredictionsFallsBackToModelProbability(t *testing.T) {
 	}
 	if ranked[0].DecisionBasis != "model_probability" || ranked[0].DecisionOutcome != "home" {
 		t.Fatalf("fallback decision=%+v", ranked[0])
+	}
+}
+
+func TestApplyPredictionPayloadRecomputesMarketDifferenceFromImplied(t *testing.T) {
+	item := predictionRow{
+		MatchID: 1,
+		Probability: probability{
+			Home: 0.463,
+			Draw: 0.246,
+			Away: 0.292,
+		},
+		PointInTimeVerified: true,
+	}
+	payload, err := json.Marshal(predictionPayload{
+		Bookmaker: &bookmakerPayload{
+			Implied: probability{
+				Home: 0.423,
+				Draw: 0.300,
+				Away: 0.277,
+			},
+			// Simulate stale or missing stored deltas; backend should
+			// recompute these from implied probabilities.
+			ModelDifference: probability{},
+		},
+	})
+	if err != nil {
+		t.Fatalf("marshal payload: %v", err)
+	}
+
+	applyPredictionPayload(&item, payload)
+
+	if item.Bookmaker == nil {
+		t.Fatal("bookmaker payload missing")
+	}
+	if got := item.Bookmaker.ModelDifference.Home; math.Abs(got-0.04) > 1e-9 {
+		t.Fatalf("home model difference=%v want 0.04", got)
+	}
+	if got := item.Bookmaker.ModelDifference.Away; math.Abs(got-0.015) > 1e-9 {
+		t.Fatalf("away model difference=%v want 0.015", got)
+	}
+
+	ranked := rankPredictions([]predictionRow{item})
+	if ranked[0].DecisionBasis != "market_difference" {
+		t.Fatalf("decision basis=%s want market_difference", ranked[0].DecisionBasis)
+	}
+	if ranked[0].DecisionOutcome != "home" {
+		t.Fatalf("decision outcome=%s want home", ranked[0].DecisionOutcome)
 	}
 }
 
