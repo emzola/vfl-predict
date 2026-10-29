@@ -3,7 +3,14 @@ import path from "node:path";
 import { chromium } from "playwright-extra";
 import stealthPlugin from "puppeteer-extra-plugin-stealth";
 
-chromium.use(stealthPlugin());
+// The stealth plugin injects scripts into every page and worker. On Bet9ja that
+// coincided with "document is not defined" / React error #200 and a blank page, and a
+// headed Chromium with AutomationControlled disabled does not need it. Opt back in
+// with AUTOBET_STEALTH=true if Bet9ja starts blocking the plain browser.
+const stealthEnabled = /^true$/i.test(process.env.AUTOBET_STEALTH || "false");
+if (stealthEnabled) {
+  chromium.use(stealthPlugin());
+}
 
 const workerId = process.env.AUTOBET_WORKER_ID || `${os.hostname()}-${process.pid}`;
 const intervalMs = Math.max(10, Number(process.env.AUTOBET_INTERVAL_SECONDS || 10)) * 1000;
@@ -30,6 +37,7 @@ const selectorPollMs = numberEnv("AUTOBET_SELECTOR_POLL_MS", 400, 100);
 const typingDelayMs = numberEnv("AUTOBET_TYPING_DELAY_MS", 75, 0);
 const browserRecycleMs = numberEnv("AUTOBET_BROWSER_RECYCLE_MINUTES", 180, 10) * 60 * 1000;
 const maxPrepareAttempts = numberEnv("AUTOBET_MAX_PREPARE_ATTEMPTS", 2, 1);
+const blankReloadAfterMs = numberEnv("AUTOBET_BLANK_RELOAD_AFTER_MS", 20000, 5000);
 const sessionCheckMs = numberEnv("AUTOBET_SESSION_CHECK_SECONDS", 60, 15) * 1000;
 const maxConsecutiveFailures = numberEnv("AUTOBET_MAX_FAILURES_BEFORE_RESTART", 3, 1);
 const heartbeatMs = numberEnv("AUTOBET_HEARTBEAT_SECONDS", 15, 5) * 1000;
@@ -387,7 +395,11 @@ async function ensureReadyPage(candidate, credentials) {
       await openVirtualHome(page);
       if (!(await hasActiveSession(page))) {
         await login(page, credentials);
-        await openVirtualHome(page);
+        // Login already leaves us on the virtual page; only navigate again if it
+        // didn't, so we avoid an extra full reload of the SPA.
+        if (!(await isOnVirtualPage(page))) {
+          await openVirtualHome(page);
+        }
       }
       await ensureTournament(page, candidate);
       return page;
@@ -425,6 +437,9 @@ async function ensureBrowser() {
       // the real Linux Chromium (navigator.platform, client hints, JS features), which is
       // exactly what bot checks look for. Let Chromium report its own identity.
       locale: browserLocale,
+      // A cached service-worker app shell is a common cause of a page that loads once
+      // and comes back blank on the next navigation. Always fetch the live page.
+      serviceWorkers: "block",
       ...(browserTimezone ? { timezoneId: browserTimezone } : {}),
     });
   } catch (error) {
@@ -928,6 +943,7 @@ function notePageProblem(text) {
 
 function bindPageLifecycle(page) {
   page.on("requestfailed", (request) => {
+    if (/google|doubleclick|bing\.|twitter\.com|facebook|run\.app\/events|hotjar|clarity/i.test(request.url())) return;
     notePageProblem(`requestfailed ${request.failure()?.errorText || ""} ${request.url()}`);
   });
   page.on("response", (response) => {
@@ -952,6 +968,15 @@ function bindPageLifecycle(page) {
   });
 }
 
+async function isOnVirtualPage(page) {
+  try {
+    if (new URL(safeUrl(page)).host !== new URL(virtualUrl).host) return false;
+  } catch {
+    return false;
+  }
+  return waitForRenderedContent(page, 2000);
+}
+
 async function openVirtualHome(page) {
   await page.goto(virtualUrl, { waitUntil: "domcontentloaded", timeout: navigationTimeoutMs });
   await waitForPageReady(page);
@@ -961,8 +986,16 @@ async function waitForPageReady(page) {
   await page.waitForLoadState("domcontentloaded", { timeout: navigationTimeoutMs }).catch(() => undefined);
   await page.locator("body").first().waitFor({ state: "visible", timeout: pageReadyTimeoutMs }).catch(() => undefined);
   await page.waitForLoadState("networkidle", { timeout: 2000 }).catch(() => undefined);
-  if (!(await waitForRenderedContent(page, pageReadyTimeoutMs))) {
-    throw new Error(`Bet9ja page did not render visible content. ${await formatPageRenderDiagnostics(page)}`);
+  // If the SPA fails to boot (blank body), reload once instead of waiting out the
+  // full timeout on a page that will never render.
+  const firstWaitMs = Math.min(pageReadyTimeoutMs, blankReloadAfterMs);
+  if (!(await waitForRenderedContent(page, firstWaitMs))) {
+    notePageProblem("blank page, reloading once");
+    await page.reload({ waitUntil: "domcontentloaded", timeout: navigationTimeoutMs }).catch(() => undefined);
+    await page.waitForLoadState("networkidle", { timeout: 2000 }).catch(() => undefined);
+    if (!(await waitForRenderedContent(page, pageReadyTimeoutMs))) {
+      throw new Error(`Bet9ja page did not render visible content (after one reload). stealth=${stealthEnabled} ${await formatPageRenderDiagnostics(page)}`);
+    }
   }
   await maybeDismissOverlays(page);
   await shortWait();
