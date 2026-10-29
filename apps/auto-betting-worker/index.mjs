@@ -53,6 +53,8 @@ const config = {
     'button:has-text("Login")',
     'button:has-text("Log in")',
     'button:has-text("Sign in")',
+    'button[type="submit"]',
+    'input[type="submit"]',
     'text=/\\blog\\s*in\\b/i',
   ]),
   loginFailureSelectors: selectorList("BET9JA_LOGIN_FAILURE_SELECTORS", [
@@ -358,12 +360,13 @@ async function login(page, credentials) {
   }
   await fillInput(userField, credentials.username);
   await fillInput(passwordField, credentials.password);
-  const submit = await firstExisting(page, config.loginSubmitSelectors);
-  if (!submit) {
-    throw new Error("Bet9ja login submit button was not found.");
-  }
   const loginUrl = safeUrl(page);
-  await clickLocator(submit);
+  const loginScope = await findLoginScope(userField, passwordField);
+  const scopedSubmit = await firstExisting(loginScope, config.loginSubmitSelectors);
+  if (!scopedSubmit) {
+    throw new Error("Bet9ja login submit button was not found inside the login form.");
+  }
+  await clickLocator(scopedSubmit);
   await waitForPageReady(page);
   const session = await waitForLoginResult(page);
   if (session.loginFailureIndicator) {
@@ -379,6 +382,21 @@ async function login(page, credentials) {
     last_login_at: new Date().toISOString(),
     last_heartbeat_at: new Date().toISOString(),
   });
+}
+
+async function findLoginScope(userField, passwordField) {
+  const candidates = [
+    userField.locator("xpath=ancestor::form[1]").first(),
+    userField.locator("xpath=ancestor::*[.//input[@type='password'] and (.//button or .//input[@type='submit'] or .//*[@role='button'])][1]").first(),
+    passwordField.locator("xpath=ancestor::*[.//input and (.//button or .//input[@type='submit'] or .//*[@role='button'])][1]").first(),
+  ];
+  for (const candidate of candidates) {
+    if (!(await isVisible(candidate))) continue;
+    if (await firstExisting(candidate, config.loginSubmitSelectors)) {
+      return candidate;
+    }
+  }
+  return userField.locator("xpath=ancestor::*[.//button or .//input[@type='submit'] or .//*[@role='button']][1]").first();
 }
 
 async function inspectSession(page) {
@@ -425,6 +443,7 @@ async function formatLoginDiagnostics(page, credentials, snapshot, loginUrl = ""
     `url=${url || "unknown"}`,
     `url_changed=${urlChanged}`,
     `title=${JSON.stringify(title)}`,
+    `frames=${JSON.stringify(frameUrls(page))}`,
     `authenticated_indicator=${snapshot.logoutIndicator?.selector || "none"}`,
     `login_form_visible=${snapshot.loginFormVisible}`,
     `login_trigger_visible=${snapshot.loginTriggerVisible}`,
@@ -438,13 +457,15 @@ function getPageTitle(page) {
 }
 
 function getSanitizedBodyText(page, username) {
-  return page.locator("body").innerText({ timeout: 1000 }).then((value) => {
-    let text = String(value || "").replace(/\s+/g, " ").trim();
-    if (username) {
-      text = text.split(String(username)).join("[redacted]");
-    }
-    return text.slice(0, 600);
-  }).catch(() => "");
+  return Promise.all(searchRoots(page).map((root) => (
+    root.locator("body").innerText({ timeout: 1000 }).then((value) => {
+      let text = String(value || "").replace(/\s+/g, " ").trim();
+      if (username) {
+        text = text.split(String(username)).join("[redacted]");
+      }
+      return text;
+    }).catch(() => "")
+  ))).then((values) => values.filter(Boolean).join(" | ").slice(0, 600)).catch(() => "");
 }
 
 async function resolveCredentials() {
@@ -579,13 +600,15 @@ async function placeCandidate(page, candidate) {
 async function findMatchRow(page, candidate) {
   const homePattern = new RegExp(escapeRegExp(candidate.home_team), "i");
   const awayPattern = new RegExp(escapeRegExp(candidate.away_team), "i");
-  const homeText = page.getByText(homePattern);
-  const awayText = page.getByText(awayPattern);
-  for (const selector of config.matchRowSelectors) {
-    const locator = page.locator(selector).filter({ has: homeText }).filter({ has: awayText }).first();
-    if (await isVisible(locator)) {
-      await locator.scrollIntoViewIfNeeded().catch(() => undefined);
-      return locator;
+  for (const root of searchRoots(page)) {
+    const homeText = root.getByText(homePattern);
+    const awayText = root.getByText(awayPattern);
+    for (const selector of config.matchRowSelectors) {
+      const locator = root.locator(selector).filter({ has: homeText }).filter({ has: awayText }).first();
+      if (await isVisible(locator)) {
+        await locator.scrollIntoViewIfNeeded().catch(() => undefined);
+        return locator;
+      }
     }
   }
   return null;
@@ -719,11 +742,9 @@ async function formatBetConfirmationDiagnostics(page) {
 async function readBetReference(page, timeoutMs = 0) {
   const deadline = Date.now() + Math.max(0, timeoutMs);
   while (true) {
-    for (const selector of config.betReferenceSelectors) {
-      const locator = page.locator(selector).first();
-      if (await isVisible(locator)) {
-        return (await locator.innerText().catch(() => "")).trim();
-      }
+    const match = await firstVisibleMatch(page, config.betReferenceSelectors);
+    if (match) {
+      return (await match.locator.innerText().catch(() => "")).trim();
     }
     if (!timeoutMs || Date.now() >= deadline) {
       return "";
@@ -771,9 +792,11 @@ async function apiRequest(pathname, init = {}) {
 
 async function firstExisting(root, selectors) {
   for (const selector of selectors) {
-    const locator = root.locator(selector).first();
-    if (await isVisible(locator) && await isEnabled(locator)) {
-      return locator;
+    for (const searchRoot of searchRoots(root)) {
+      const locator = searchRoot.locator(selector).first();
+      if (await isVisible(locator) && await isEnabled(locator)) {
+        return locator;
+      }
     }
   }
   return null;
@@ -781,12 +804,25 @@ async function firstExisting(root, selectors) {
 
 async function firstVisibleMatch(root, selectors) {
   for (const selector of selectors) {
-    const locator = root.locator(selector).first();
-    if (await isVisible(locator)) {
-      return { locator, selector };
+    for (const searchRoot of searchRoots(root)) {
+      const locator = searchRoot.locator(selector).first();
+      if (await isVisible(locator)) {
+        return { locator, selector };
+      }
     }
   }
   return null;
+}
+
+function searchRoots(root) {
+  if (!root || typeof root.frames !== "function") {
+    return [root];
+  }
+  try {
+    return root.frames();
+  } catch {
+    return [root];
+  }
 }
 
 async function waitForExisting(root, selectors, timeoutMs) {
@@ -867,6 +903,16 @@ function safeUrl(page) {
   } catch {
     return "";
   }
+}
+
+function frameUrls(page) {
+  return searchRoots(page).map((root) => {
+    try {
+      return typeof root.url === "function" ? root.url() : "";
+    } catch {
+      return "";
+    }
+  }).filter(Boolean);
 }
 
 async function shortWait() {
@@ -956,12 +1002,17 @@ async function maybeDismissOverlays(page) {
 }
 
 async function waitForTeamText(page, teamName, timeoutMs) {
-  try {
-    await page.getByText(new RegExp(escapeRegExp(teamName), "i")).first().waitFor({ timeout: timeoutMs });
-    return true;
-  } catch {
-    return false;
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    for (const root of searchRoots(page)) {
+      const locator = root.getByText(new RegExp(escapeRegExp(teamName), "i")).first();
+      if (await isVisible(locator)) {
+        return true;
+      }
+    }
+    await sleep(selectorPollMs);
   }
+  return false;
 }
 
 async function clickLocator(locator, options = {}) {
