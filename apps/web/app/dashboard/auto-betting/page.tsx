@@ -14,8 +14,11 @@ export default function AutoBettingPage() {
   const [data, setData] = useState<AutoBettingState>();
   const [enabled, setEnabled] = useState(false);
   const [baseStake, setBaseStake] = useState(0);
+  const [bet9jaUsername, setBet9jaUsername] = useState("");
+  const [bet9jaPassword, setBet9jaPassword] = useState("");
   const [error, setError] = useState("");
   const [saved, setSaved] = useState("");
+  const [credentialsSaved, setCredentialsSaved] = useState("");
   const refreshInFlight = useRef(false);
 
   const load = useCallback(async () => {
@@ -42,6 +45,7 @@ export default function AutoBettingPage() {
 
   async function save() {
     setSaved("");
+    setError("");
     try {
       await apiFetch("/api/v1/auto-betting", {
         method: "PATCH",
@@ -49,6 +53,28 @@ export default function AutoBettingPage() {
         body: JSON.stringify({ enabled, base_stake: Number(baseStake) }),
       });
       setSaved("Auto betting settings saved.");
+      await load();
+    } catch (value) {
+      setError(errorMessage(value));
+    }
+  }
+
+  async function saveCredentials() {
+    setCredentialsSaved("");
+    setError("");
+    if (!bet9jaUsername.trim() || !bet9jaPassword.trim()) {
+      setError("Enter both the Bet9ja username and password to save credentials.");
+      return;
+    }
+    try {
+      await apiFetch("/api/v1/auto-betting/credentials", {
+        method: "PATCH",
+        headers: { "X-CSRF-Token": csrfToken() },
+        body: JSON.stringify({ username: bet9jaUsername, password: bet9jaPassword }),
+      });
+      setCredentialsSaved("Bet9ja credentials saved securely.");
+      setBet9jaUsername("");
+      setBet9jaPassword("");
       await load();
     } catch (value) {
       setError(errorMessage(value));
@@ -129,6 +155,50 @@ export default function AutoBettingPage() {
         </div>
 
         <div className="space-y-6">
+          <div className="panel p-6">
+            <p className="eyebrow">Bet9ja credentials</p>
+            <div className="mt-4 grid gap-3 text-sm text-slate-300 sm:grid-cols-2">
+              <div>
+                <p className="text-slate-500">Stored username</p>
+                <p className="mt-1 font-semibold text-white">{data.settings.masked_username || "Not saved yet"}</p>
+              </div>
+              <div>
+                <p className="text-slate-500">Credentials status</p>
+                <p className="mt-1 font-semibold text-white">{data.settings.credentials_configured ? "Configured" : "Missing"}</p>
+              </div>
+            </div>
+            <p className="mt-3 text-sm leading-6 text-slate-400">Credentials are encrypted on the server and are only exposed to the internal Playwright worker. The password never comes back to this page after save.</p>
+            <div className="mt-5 space-y-4">
+              <label className="block text-sm text-slate-300">
+                Bet9ja username
+                <input
+                  type="text"
+                  value={bet9jaUsername}
+                  onChange={(event) => setBet9jaUsername(event.target.value)}
+                  placeholder={data.settings.masked_username || "Enter username"}
+                  autoComplete="off"
+                  className="mt-2 w-full rounded-lg border border-slate-700 bg-slate-950/40 px-3 py-2 text-white"
+                />
+              </label>
+              <label className="block text-sm text-slate-300">
+                Bet9ja password
+                <input
+                  type="password"
+                  value={bet9jaPassword}
+                  onChange={(event) => setBet9jaPassword(event.target.value)}
+                  placeholder={data.settings.credentials_configured ? "Enter a new password to replace the saved one" : "Enter password"}
+                  autoComplete="new-password"
+                  className="mt-2 w-full rounded-lg border border-slate-700 bg-slate-950/40 px-3 py-2 text-white"
+                />
+              </label>
+              <div className="text-xs text-slate-500">Last updated {formatDate(data.settings.credentials_updated_at)}</div>
+              <div>
+                <button onClick={saveCredentials} className="rounded-lg bg-white px-4 py-2 text-sm font-semibold text-slate-900">Save Bet9ja credentials</button>
+                {credentialsSaved && <span className="ml-3 text-sm text-accent">{credentialsSaved}</span>}
+              </div>
+            </div>
+          </div>
+
           <div className="panel p-6">
             <div className="flex flex-wrap items-start justify-between gap-3">
               <div>

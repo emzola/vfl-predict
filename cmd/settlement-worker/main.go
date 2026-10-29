@@ -18,7 +18,7 @@ import (
 func main() {
 	databaseURL := os.Getenv("DATABASE_URL")
 	migrationsDir := "db/migrations"
-	interval := time.Minute
+	interval := 10 * time.Second
 	runOnce := false
 	flag.StringVar(&databaseURL, "database-url", databaseURL, "PostgreSQL connection URL")
 	flag.StringVar(&migrationsDir, "migrations-dir", migrationsDir, "directory containing SQL migrations")

@@ -10,7 +10,7 @@ RELEASE_SHA="${RELEASE_SHA:?RELEASE_SHA is required}"
 BUNDLE_DIR="${BUNDLE_DIR:-$APP_DIR/releases/$RELEASE_SHA}"
 ENV_FILE="${ENV_FILE:-$APP_DIR/.env.production}"
 COMPOSE_FILE="${COMPOSE_FILE:-$APP_DIR/docker-compose.production.yml}"
-DEPLOY_SERVICES="${DEPLOY_SERVICES:-api web caddy live-monitor prediction-worker settlement-worker}"
+DEPLOY_SERVICES="${DEPLOY_SERVICES:-api web caddy live-monitor prediction-worker settlement-worker auto-betting-worker}"
 DRY_RUN="${DRY_RUN:-0}"
 
 if [[ ! "$RELEASE_SHA" =~ ^[0-9a-fA-F]{7,64}$ ]]; then
@@ -96,7 +96,7 @@ fi
 pull_succeeded=0
 for pull_attempt in $(seq 1 "$pull_attempts"); do
   echo "pulling release images (attempt $pull_attempt/$pull_attempts)"
-  if compose pull migrate phase6-research api web live-monitor prediction-worker settlement-worker caddy; then
+  if compose pull migrate phase6-research api web live-monitor prediction-worker settlement-worker auto-betting-worker caddy; then
     pull_succeeded=1
     break
   fi

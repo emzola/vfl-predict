@@ -42,6 +42,7 @@ services:
       EMAIL_PROVIDER_URL: ${EMAIL_PROVIDER_URL:-}
       EMAIL_PROVIDER_TOKEN: ${EMAIL_PROVIDER_TOKEN:-}
       EMAIL_FROM: ${EMAIL_FROM:-}
+      AUTOBET_CREDENTIALS_ENCRYPTION_KEY: ${AUTOBET_CREDENTIALS_ENCRYPTION_KEY:-}
     depends_on:
       postgres:
         condition: service_healthy
@@ -74,13 +75,13 @@ services:
 
   auto-betting-worker:
     build:
-      context: ../../apps/auto-betting-worker
-      dockerfile: Dockerfile
+      context: ../..
+      dockerfile: infra/docker/Dockerfile.autobet
     restart: unless-stopped
     environment:
       INTERNAL_API_BASE_URL: http://api:8090
       INTERNAL_API_TOKEN: ${INTERNAL_API_TOKEN:?Set INTERNAL_API_TOKEN in an untracked .env file or the shell}
-      AUTOBET_INTERVAL_SECONDS: ${AUTOBET_INTERVAL_SECONDS:-30}
+      AUTOBET_INTERVAL_SECONDS: ${AUTOBET_INTERVAL_SECONDS:-10}
       AUTOBET_HEADLESS: ${AUTOBET_HEADLESS:-true}
       AUTOBET_DRY_RUN: ${AUTOBET_DRY_RUN:-true}
       AUTOBET_USER_DATA_DIR: /ms-playwright-data

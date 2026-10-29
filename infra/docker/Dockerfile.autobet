@@ -1,0 +1,10 @@
+FROM mcr.microsoft.com/playwright:v1.55.1-noble
+
+WORKDIR /app
+COPY apps/auto-betting-worker/package.json /app/package.json
+COPY apps/auto-betting-worker/package-lock.json /app/package-lock.json
+RUN npm ci --omit=dev
+COPY apps/auto-betting-worker/index.mjs /app/index.mjs
+
+ENV NODE_ENV=production
+CMD ["npm", "start"]

@@ -10,8 +10,10 @@ import (
 	"sync"
 	"time"
 
+	"bet9ja-vfl/services/autobet"
 	"bet9ja-vfl/services/ingest"
 	"bet9ja-vfl/services/provider"
+	"bet9ja-vfl/services/settlement"
 )
 
 // PollConfig follows the conservative defaults in specification section 6.2.
@@ -332,6 +334,9 @@ func (m *Monitor) pollOnceLeased(ctx context.Context, now time.Time) (PollReport
 			return PollReport{}, err
 		}
 	}
+	if err := m.settleObservedResults(ctx); err != nil {
+		return PollReport{}, err
+	}
 	upcoming, kickoff := upcomingRounds(fixturesPayload.Matches, now)
 	if len(upcoming) == 0 {
 		return PollReport{SeasonID: current.ID.String(), FixtureCount: len(fixturesPayload.Matches), FirstKickoff: kickoff, ObservedAt: now, CacheObservations: cacheObservations}, nil
@@ -510,6 +515,19 @@ func fixturesForRound(fixtures []provider.Fixture, round int) []provider.Fixture
 		}
 	}
 	return result
+}
+
+func (m *Monitor) settleObservedResults(ctx context.Context) error {
+	if m == nil || m.Repo == nil || m.Repo.DB == nil {
+		return errors.New("live monitor repository database is not initialized")
+	}
+	settler := settlement.NewSettler(m.Repo.DB)
+	if _, err := settler.Settle(ctx, ""); err != nil {
+		return err
+	}
+	autoBetService := autobet.NewService(m.Repo.DB)
+	_, err := autoBetService.Settle(ctx)
+	return err
 }
 
 // Run loops independently of dashboard requests. The monitor uses the

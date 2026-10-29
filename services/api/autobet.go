@@ -18,6 +18,7 @@ func (s *Server) autoBettingAPI(w http.ResponseWriter, r *http.Request) {
 	}
 	service := autobet.NewService(s.DB)
 	service.Now = s.now
+	service.CredentialsKey = s.AutoBettingCredentialsKey
 	switch r.Method {
 	case http.MethodGet:
 		state, err := service.LoadDashboard(r.Context())
@@ -53,6 +54,38 @@ func (s *Server) autoBettingAPI(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
+func (s *Server) autoBettingCredentialsAPI(w http.ResponseWriter, r *http.Request) {
+	session, ok := authSessionFromContext(r.Context())
+	if !ok {
+		writeError(w, http.StatusUnauthorized, "authentication required")
+		return
+	}
+	if r.Method != http.MethodPatch {
+		writeError(w, http.StatusMethodNotAllowed, "method not allowed")
+		return
+	}
+	if !s.csrfRequestIsValid(r, session) {
+		writeError(w, http.StatusForbidden, "csrf validation failed")
+		return
+	}
+	var input struct {
+		Username string `json:"username"`
+		Password string `json:"password"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&input); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid auto betting credentials")
+		return
+	}
+	service := autobet.NewService(s.DB)
+	service.Now = s.now
+	service.CredentialsKey = s.AutoBettingCredentialsKey
+	if err := service.UpdateCredentials(r.Context(), session.AccountID, input.Username, input.Password); err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]string{"status": "updated"})
+}
+
 func (s *Server) autoBettingInternalTask(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		writeError(w, http.StatusMethodNotAllowed, "method not allowed")
@@ -66,6 +99,27 @@ func (s *Server) autoBettingInternalTask(w http.ResponseWriter, r *http.Request)
 		return
 	}
 	writeJSON(w, http.StatusOK, task)
+}
+
+func (s *Server) autoBettingInternalCredentials(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		writeError(w, http.StatusMethodNotAllowed, "method not allowed")
+		return
+	}
+	service := autobet.NewService(s.DB)
+	service.Now = s.now
+	service.CredentialsKey = s.AutoBettingCredentialsKey
+	credentials, err := service.LoadWorkerCredentials(r.Context())
+	if err != nil {
+		message := strings.ToLower(strings.TrimSpace(err.Error()))
+		if strings.Contains(message, "not configured") {
+			writeError(w, http.StatusNotFound, err.Error())
+			return
+		}
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, credentials)
 }
 
 func (s *Server) autoBettingInternalRuntime(w http.ResponseWriter, r *http.Request) {

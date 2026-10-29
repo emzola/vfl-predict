@@ -186,6 +186,19 @@ jobs:
           labels: org.opencontainers.image.revision=${{ github.sha }}
           cache-from: type=gha,scope=vfl-web
           cache-to: type=gha,mode=max,scope=vfl-web
+      - name: Build and push auto-betting worker image
+        id: autobet
+        uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6
+        with:
+          context: .
+          file: infra/docker/Dockerfile.autobet
+          push: true
+          tags: |
+            ${{ steps.image.outputs.prefix }}/vfl-autobet:${{ github.sha }}
+            ${{ steps.image.outputs.prefix }}/vfl-autobet:latest
+          labels: org.opencontainers.image.revision=${{ github.sha }}
+          cache-from: type=gha,scope=vfl-autobet
+          cache-to: type=gha,mode=max,scope=vfl-autobet
       - name: Save image digest manifest
         shell: bash
         run: |
@@ -193,8 +206,9 @@ jobs:
             printf 'vfl-api|%s\n' '${{ steps.api.outputs.digest }}'
             printf 'vfl-worker|%s\n' '${{ steps.worker.outputs.digest }}'
             printf 'vfl-web|%s\n' '${{ steps.web.outputs.digest }}'
+            printf 'vfl-autobet|%s\n' '${{ steps.autobet.outputs.digest }}'
           } > image-digests.txt
-          test "$(wc -l < image-digests.txt)" -eq 3
+          test "$(wc -l < image-digests.txt)" -eq 4
       - name: Upload release manifest
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
@@ -220,7 +234,7 @@ jobs:
       PRODUCTION_SSH_PRIVATE_KEY: ${{ secrets.PRODUCTION_SSH_PRIVATE_KEY }}
       PRODUCTION_KNOWN_HOSTS: ${{ secrets.PRODUCTION_KNOWN_HOSTS }}
       PRODUCTION_APP_DIR: ${{ vars.PRODUCTION_APP_DIR || '/opt/bet9ja-vfl' }}
-      PRODUCTION_DEPLOY_SERVICES: ${{ vars.PRODUCTION_DEPLOY_SERVICES || 'api web caddy live-monitor prediction-worker settlement-worker' }}
+      PRODUCTION_DEPLOY_SERVICES: ${{ vars.PRODUCTION_DEPLOY_SERVICES || 'api web caddy live-monitor prediction-worker settlement-worker auto-betting-worker' }}
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
       - name: Download release digest manifest

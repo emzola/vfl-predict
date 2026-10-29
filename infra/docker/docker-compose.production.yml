@@ -90,6 +90,7 @@ services:
       RESEND_API_KEY: ${RESEND_API_KEY:?Set RESEND_API_KEY in the VPS environment file}
       RESEND_API_URL: ${RESEND_API_URL:-https://api.resend.com}
       EMAIL_FROM: ${EMAIL_FROM:?Set EMAIL_FROM to a verified Resend sender}
+      AUTOBET_CREDENTIALS_ENCRYPTION_KEY: ${AUTOBET_CREDENTIALS_ENCRYPTION_KEY:?Set AUTOBET_CREDENTIALS_ENCRYPTION_KEY in the VPS environment file}
     depends_on:
       migrate:
         condition: service_completed_successfully
@@ -212,7 +213,7 @@ services:
     image: ${GHCR_IMAGE_PREFIX:?Set GHCR_IMAGE_PREFIX, for example ghcr.io/owner/repository}/vfl-worker:${RELEASE_SHA:?Set RELEASE_SHA to an immutable Git commit SHA}
     restart: unless-stopped
     entrypoint: ["/app/settlement-worker"]
-    command: ["-interval", "60s"]
+    command: ["-interval", "10s"]
     environment:
       DATABASE_URL: postgres://${POSTGRES_USER:-vfl}:${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in the VPS environment file}@postgres:5432/${POSTGRES_DB:-vfl}?sslmode=disable
       RUN_MIGRATIONS: "false"
@@ -239,14 +240,14 @@ services:
     environment:
       INTERNAL_API_BASE_URL: http://api:8090
       INTERNAL_API_TOKEN: ${INTERNAL_API_TOKEN:?Set INTERNAL_API_TOKEN in the VPS environment file}
-      AUTOBET_INTERVAL_SECONDS: ${AUTOBET_INTERVAL_SECONDS:-30}
+      AUTOBET_INTERVAL_SECONDS: ${AUTOBET_INTERVAL_SECONDS:-10}
       AUTOBET_HEADLESS: ${AUTOBET_HEADLESS:-true}
       AUTOBET_DRY_RUN: ${AUTOBET_DRY_RUN:-false}
       AUTOBET_USER_DATA_DIR: /ms-playwright-data
       BET9JA_VIRTUAL_URL: ${BET9JA_VIRTUAL_URL:-https://virtual.bet9ja.com/virtual/}
       BET9JA_VFL_TOURNAMENT_NAME: ${BET9JA_VFL_TOURNAMENT_NAME:-Euro League}
-      BET9JA_USERNAME: ${BET9JA_USERNAME:?Set BET9JA_USERNAME in the VPS environment file}
-      BET9JA_PASSWORD: ${BET9JA_PASSWORD:?Set BET9JA_PASSWORD in the VPS environment file}
+      BET9JA_USERNAME: ${BET9JA_USERNAME:-}
+      BET9JA_PASSWORD: ${BET9JA_PASSWORD:-}
       BET9JA_LOGIN_TRIGGER_SELECTORS: ${BET9JA_LOGIN_TRIGGER_SELECTORS:-}
       BET9JA_USERNAME_SELECTORS: ${BET9JA_USERNAME_SELECTORS:-}
       BET9JA_PASSWORD_SELECTORS: ${BET9JA_PASSWORD_SELECTORS:-}

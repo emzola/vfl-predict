@@ -6,7 +6,7 @@ TARGET_SHA="${TARGET_SHA:-}"
 CONFIRM_ROLLBACK="${CONFIRM_ROLLBACK:-}"
 ENV_FILE="${ENV_FILE:-$APP_DIR/.env.production}"
 COMPOSE_FILE="${COMPOSE_FILE:-$APP_DIR/docker-compose.production.yml}"
-SERVICES="${ROLLBACK_SERVICES:-api web caddy live-monitor prediction-worker settlement-worker}"
+SERVICES="${ROLLBACK_SERVICES:-api web caddy live-monitor prediction-worker settlement-worker auto-betting-worker}"
 
 if [[ "$CONFIRM_ROLLBACK" != "YES" ]]; then
   echo "set CONFIRM_ROLLBACK=YES to authorize an image rollback" >&2

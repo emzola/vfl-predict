@@ -184,6 +184,9 @@ export type AutoBettingSettings = {
   base_stake: number;
   profit_target: number;
   minimum_odds: number;
+  credentials_configured: boolean;
+  masked_username?: string;
+  credentials_updated_at?: string;
   updated_at: string;
 };
 

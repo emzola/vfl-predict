@@ -3,13 +3,13 @@ import path from "node:path";
 import { chromium } from "playwright";
 
 const workerId = process.env.AUTOBET_WORKER_ID || `${os.hostname()}-${process.pid}`;
-const intervalMs = Math.max(10, Number(process.env.AUTOBET_INTERVAL_SECONDS || 30)) * 1000;
+const intervalMs = Math.max(10, Number(process.env.AUTOBET_INTERVAL_SECONDS || 10)) * 1000;
 const internalBaseUrl = (process.env.INTERNAL_API_BASE_URL || "http://api:8090").replace(/\/+$/, "");
 const internalToken = process.env.INTERNAL_API_TOKEN || "";
 const virtualUrl = process.env.BET9JA_VIRTUAL_URL || "https://virtual.bet9ja.com/virtual/";
 const tournamentName = process.env.BET9JA_VFL_TOURNAMENT_NAME || "Euro League";
-const username = process.env.BET9JA_USERNAME || "";
-const password = process.env.BET9JA_PASSWORD || "";
+const fallbackUsername = process.env.BET9JA_USERNAME || "";
+const fallbackPassword = process.env.BET9JA_PASSWORD || "";
 const headless = !/^false$/i.test(process.env.AUTOBET_HEADLESS || "true");
 const dryRun = /^true$/i.test(process.env.AUTOBET_DRY_RUN || "false");
 const userDataDir = process.env.AUTOBET_USER_DATA_DIR || path.join("/tmp", "autobet-browser");
@@ -124,12 +124,13 @@ async function handleTask(task) {
     return;
   }
 
-  if (!username || !password) {
-    await reportRuntime({ ...runtime, state: "login_required", last_error: "BET9JA_USERNAME and BET9JA_PASSWORD must be configured." });
+  const credentials = await resolveCredentials();
+  if (!credentials.username || !credentials.password) {
+    await reportRuntime({ ...runtime, state: "login_required", last_error: "Bet9ja credentials must be saved from the dashboard or provided through the env fallback." });
     return;
   }
 
-  const page = await ensureReadyPage(task.candidate);
+  const page = await ensureReadyPage(task.candidate, credentials);
   await reportRuntime({
     ...runtime,
     state: "placing",
@@ -170,12 +171,12 @@ async function handleTask(task) {
   });
 }
 
-async function ensureReadyPage(candidate) {
+async function ensureReadyPage(candidate, credentials) {
   const page = await ensureBrowser();
   await page.goto(virtualUrl, { waitUntil: "domcontentloaded" });
   await shortWait();
   if (!(await hasActiveSession(page))) {
-    await login(page);
+    await login(page, credentials);
   }
   await ensureTournament(page, candidate);
   return page;
@@ -202,7 +203,7 @@ async function hasActiveSession(page) {
   return false;
 }
 
-async function login(page) {
+async function login(page, credentials) {
   const trigger = await firstExisting(page, config.loginTriggerSelectors);
   if (trigger) {
     await trigger.click();
@@ -213,8 +214,8 @@ async function login(page) {
   if (!userField || !passwordField) {
     throw new Error("Bet9ja login form was not found.");
   }
-  await userField.fill(username);
-  await passwordField.fill(password);
+  await userField.fill(credentials.username);
+  await passwordField.fill(credentials.password);
   const submit = await firstExisting(page, config.loginSubmitSelectors);
   if (!submit) {
     throw new Error("Bet9ja login submit button was not found.");
@@ -232,6 +233,31 @@ async function login(page) {
     last_login_at: new Date().toISOString(),
     last_heartbeat_at: new Date().toISOString(),
   });
+}
+
+async function resolveCredentials() {
+  const stored = await fetchStoredCredentials();
+  if (stored?.username && stored?.password) {
+    return stored;
+  }
+  return { username: fallbackUsername, password: fallbackPassword };
+}
+
+async function fetchStoredCredentials() {
+  const response = await fetch(`${internalBaseUrl}/internal/v1/auto-betting/credentials`, {
+    headers: {
+      Accept: "application/json",
+      ...(internalToken ? { "X-Internal-Token": internalToken } : {}),
+    },
+  });
+  if (response.status === 404) {
+    return null;
+  }
+  if (!response.ok) {
+    const body = await response.text().catch(() => "");
+    throw new Error(`Internal API /internal/v1/auto-betting/credentials failed with ${response.status}: ${body || response.statusText}`);
+  }
+  return response.json();
 }
 
 async function ensureTournament(page, candidate) {

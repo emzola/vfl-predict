@@ -18,8 +18,9 @@ const (
 )
 
 type Service struct {
-	DB  *sql.DB
-	Now func() time.Time
+	DB             *sql.DB
+	Now            func() time.Time
+	CredentialsKey string
 }
 
 func NewService(db *sql.DB) *Service {
@@ -34,12 +35,17 @@ func (s *Service) now() time.Time {
 }
 
 type Settings struct {
-	Enabled      bool      `json:"enabled"`
-	BaseStake    float64   `json:"base_stake"`
-	ProfitTarget float64   `json:"profit_target"`
-	MinimumOdds  float64   `json:"minimum_odds"`
-	StakeResetAt time.Time `json:"-"`
-	UpdatedAt    time.Time `json:"updated_at"`
+	Enabled               bool       `json:"enabled"`
+	BaseStake             float64    `json:"base_stake"`
+	ProfitTarget          float64    `json:"profit_target"`
+	MinimumOdds           float64    `json:"minimum_odds"`
+	CredentialsConfigured bool       `json:"credentials_configured"`
+	MaskedUsername        string     `json:"masked_username,omitempty"`
+	CredentialsUpdatedAt  *time.Time `json:"credentials_updated_at,omitempty"`
+	StakeResetAt          time.Time  `json:"-"`
+	UsernameCiphertext    string     `json:"-"`
+	PasswordCiphertext    string     `json:"-"`
+	UpdatedAt             time.Time  `json:"updated_at"`
 }
 
 type Runtime struct {
@@ -265,6 +271,70 @@ SET enabled = $2,
     updated_at = $5
 WHERE setting_key = $1`, primaryKey, enabled, baseStake, accountID, s.now())
 	return err
+}
+
+func (s *Service) UpdateCredentials(ctx context.Context, accountID, username, password string) error {
+	if err := s.ensureRows(ctx); err != nil {
+		return err
+	}
+	if strings.TrimSpace(accountID) == "" {
+		accountID = "primary"
+	}
+	username = normalizeCredential(username)
+	password = normalizeCredential(password)
+	if username == "" || password == "" {
+		return errors.New("bet9ja username and password are both required")
+	}
+	key, err := credentialEncryptionKey(s.CredentialsKey)
+	if err != nil {
+		return err
+	}
+	encryptedUsername, err := encryptCredentialValue(key, username)
+	if err != nil {
+		return err
+	}
+	encryptedPassword, err := encryptCredentialValue(key, password)
+	if err != nil {
+		return err
+	}
+	now := s.now()
+	_, err = s.DB.ExecContext(ctx, `
+UPDATE auto_betting_settings
+SET bet9ja_username_ciphertext = $2,
+    bet9ja_password_ciphertext = $3,
+    bet9ja_username_masked = $4,
+    credentials_updated_by = NULLIF($5, ''),
+    credentials_updated_at = $6,
+    updated_by = NULLIF($5, ''),
+    updated_at = $6
+WHERE setting_key = $1`, primaryKey, encryptedUsername, encryptedPassword, truncate(maskUsername(username), 128), accountID, now)
+	return err
+}
+
+func (s *Service) LoadWorkerCredentials(ctx context.Context) (Credentials, error) {
+	if err := s.ensureRows(ctx); err != nil {
+		return Credentials{}, err
+	}
+	settings, err := s.loadSettings(ctx)
+	if err != nil {
+		return Credentials{}, err
+	}
+	if strings.TrimSpace(settings.UsernameCiphertext) == "" || strings.TrimSpace(settings.PasswordCiphertext) == "" {
+		return Credentials{}, errors.New("bet9ja credentials are not configured")
+	}
+	key, err := credentialEncryptionKey(s.CredentialsKey)
+	if err != nil {
+		return Credentials{}, err
+	}
+	username, err := decryptCredentialValue(key, settings.UsernameCiphertext)
+	if err != nil {
+		return Credentials{}, err
+	}
+	password, err := decryptCredentialValue(key, settings.PasswordCiphertext)
+	if err != nil {
+		return Credentials{}, err
+	}
+	return Credentials{Username: username, Password: password}, nil
 }
 
 func (s *Service) NextTask(ctx context.Context) (*WorkerTask, error) {
@@ -772,16 +842,33 @@ LIMIT 1`).Scan(&seasonID)
 
 func (s *Service) loadSettings(ctx context.Context) (Settings, error) {
 	var settings Settings
+	var maskedUsername, usernameCiphertext, passwordCiphertext sql.NullString
+	var credentialsUpdatedAt sql.NullTime
 	err := s.DB.QueryRowContext(ctx, `
 SELECT enabled, base_stake::double precision, profit_target::double precision, minimum_odds::double precision,
-       stake_reset_at, updated_at
+       stake_reset_at, updated_at, COALESCE(bet9ja_username_masked, ''), credentials_updated_at,
+       COALESCE(bet9ja_username_ciphertext, ''), COALESCE(bet9ja_password_ciphertext, '')
 FROM auto_betting_settings
-WHERE setting_key = $1`, primaryKey).Scan(&settings.Enabled, &settings.BaseStake, &settings.ProfitTarget, &settings.MinimumOdds, &settings.StakeResetAt, &settings.UpdatedAt)
+WHERE setting_key = $1`, primaryKey).Scan(&settings.Enabled, &settings.BaseStake, &settings.ProfitTarget, &settings.MinimumOdds, &settings.StakeResetAt, &settings.UpdatedAt, &maskedUsername, &credentialsUpdatedAt, &usernameCiphertext, &passwordCiphertext)
 	if err != nil {
 		return Settings{}, err
 	}
 	settings.StakeResetAt = settings.StakeResetAt.UTC()
 	settings.UpdatedAt = settings.UpdatedAt.UTC()
+	if maskedUsername.Valid {
+		settings.MaskedUsername = maskedUsername.String
+	}
+	if credentialsUpdatedAt.Valid {
+		value := credentialsUpdatedAt.Time.UTC()
+		settings.CredentialsUpdatedAt = &value
+	}
+	if usernameCiphertext.Valid {
+		settings.UsernameCiphertext = usernameCiphertext.String
+	}
+	if passwordCiphertext.Valid {
+		settings.PasswordCiphertext = passwordCiphertext.String
+	}
+	settings.CredentialsConfigured = strings.TrimSpace(settings.UsernameCiphertext) != "" && strings.TrimSpace(settings.PasswordCiphertext) != ""
 	return settings, nil
 }
 

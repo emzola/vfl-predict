@@ -6,6 +6,7 @@ import (
 	"errors"
 	"net"
 	"net/http"
+	"os"
 	"strconv"
 	"strings"
 	"time"
@@ -15,10 +16,11 @@ import (
 // starts it binds to loopback by default; an optional token is required for
 // deployments that place the service behind a private network interface.
 type Server struct {
-	DB            *sql.DB
-	InternalToken string
-	Now           func() time.Time
-	Auth          AuthConfig
+	DB                        *sql.DB
+	InternalToken             string
+	Now                       func() time.Time
+	Auth                      AuthConfig
+	AutoBettingCredentialsKey string
 }
 
 func NewServer(db *sql.DB, internalToken string) *Server {
@@ -26,7 +28,13 @@ func NewServer(db *sql.DB, internalToken string) *Server {
 }
 
 func NewServerWithAuthConfig(db *sql.DB, internalToken string, auth AuthConfig) *Server {
-	return &Server{DB: db, InternalToken: strings.TrimSpace(internalToken), Now: time.Now, Auth: auth}
+	return &Server{
+		DB:                        db,
+		InternalToken:             strings.TrimSpace(internalToken),
+		Now:                       time.Now,
+		Auth:                      auth,
+		AutoBettingCredentialsKey: strings.TrimSpace(os.Getenv("AUTOBET_CREDENTIALS_ENCRYPTION_KEY")),
+	}
 }
 
 func (s *Server) Handler() http.Handler {
@@ -48,6 +56,7 @@ func (s *Server) Handler() http.Handler {
 	internal.HandleFunc("/internal/v1/metrics/forward", s.forwardMetrics)
 	internal.HandleFunc("/internal/v1/health/feed", s.feedHealth)
 	internal.HandleFunc("/internal/v1/auto-betting/task", s.autoBettingInternalTask)
+	internal.HandleFunc("/internal/v1/auto-betting/credentials", s.autoBettingInternalCredentials)
 	internal.HandleFunc("/internal/v1/auto-betting/runtime", s.autoBettingInternalRuntime)
 	internal.HandleFunc("/internal/v1/auto-betting/rounds/{seasonId}/{round}/skip", s.autoBettingInternalSkip)
 	internal.HandleFunc("/internal/v1/auto-betting/rounds/{seasonId}/{round}/placed", s.autoBettingInternalPlaced)
@@ -76,6 +85,7 @@ func (s *Server) Handler() http.Handler {
 	root.Handle("/api/v1/operations", authenticated(http.HandlerFunc(s.operationsAPI)))
 	root.Handle("/api/v1/settings", authenticated(http.HandlerFunc(s.settingsAPI)))
 	root.Handle("/api/v1/auto-betting", authenticated(http.HandlerFunc(s.autoBettingAPI)))
+	root.Handle("/api/v1/auto-betting/credentials", authenticated(http.HandlerFunc(s.autoBettingCredentialsAPI)))
 	root.HandleFunc("/api/v1/system/health", s.systemHealth)
 	return s.securityHeaders(root)
 }
