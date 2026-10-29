@@ -10,9 +10,18 @@ const virtualUrl = process.env.BET9JA_VIRTUAL_URL || "https://virtual.bet9ja.com
 const tournamentName = process.env.BET9JA_VFL_TOURNAMENT_NAME || "Euro League";
 const fallbackUsername = process.env.BET9JA_USERNAME || "";
 const fallbackPassword = process.env.BET9JA_PASSWORD || "";
-const headless = !/^false$/i.test(process.env.AUTOBET_HEADLESS || "true");
+const headless = false;
 const dryRun = /^true$/i.test(process.env.AUTOBET_DRY_RUN || "false");
 const userDataDir = process.env.AUTOBET_USER_DATA_DIR || path.join("/tmp", "autobet-browser");
+const navigationTimeoutMs = numberEnv("AUTOBET_NAVIGATION_TIMEOUT_MS", 30000, 5000);
+const actionTimeoutMs = numberEnv("AUTOBET_ACTION_TIMEOUT_MS", 10000, 1000);
+const pageReadyTimeoutMs = numberEnv("AUTOBET_PAGE_READY_TIMEOUT_MS", 20000, 5000);
+const confirmationTimeoutMs = numberEnv("AUTOBET_CONFIRMATION_TIMEOUT_MS", 10000, 1000);
+const shortDelayMs = numberEnv("AUTOBET_SHORT_WAIT_MS", 1500, 100);
+const selectorPollMs = numberEnv("AUTOBET_SELECTOR_POLL_MS", 400, 100);
+const typingDelayMs = numberEnv("AUTOBET_TYPING_DELAY_MS", 75, 0);
+const browserRecycleMs = numberEnv("AUTOBET_BROWSER_RECYCLE_MINUTES", 180, 10) * 60 * 1000;
+const maxPrepareAttempts = numberEnv("AUTOBET_MAX_PREPARE_ATTEMPTS", 2, 1);
 
 const config = {
   loginTriggerSelectors: selectorList("BET9JA_LOGIN_TRIGGER_SELECTORS", [
@@ -91,11 +100,18 @@ const config = {
     'button[title*="remove" i]',
     'text=/^x$/i',
   ]),
+  dismissOverlaySelectors: selectorList("BET9JA_DISMISS_OVERLAY_SELECTORS", [
+    'button[aria-label*="close" i]',
+    'button[title*="close" i]',
+    '[role="dialog"] button[aria-label*="close" i]',
+    '[role="dialog"] button[title*="close" i]',
+  ]),
 };
 
 const browserState = {
   context: null,
   page: null,
+  launchedAt: 0,
 };
 
 async function main() {
@@ -172,57 +188,96 @@ async function handleTask(task) {
 }
 
 async function ensureReadyPage(candidate, credentials) {
-  const page = await ensureBrowser();
-  await page.goto(virtualUrl, { waitUntil: "domcontentloaded" });
-  await shortWait();
-  if (!(await hasActiveSession(page))) {
-    await login(page, credentials);
+  let lastError;
+  for (let attempt = 1; attempt <= maxPrepareAttempts; attempt += 1) {
+    const page = await ensureBrowser();
+    try {
+      await openVirtualHome(page);
+      if (!(await hasActiveSession(page))) {
+        await login(page, credentials);
+        await openVirtualHome(page);
+      }
+      await ensureTournament(page, candidate);
+      return page;
+    } catch (error) {
+      lastError = error;
+      if (attempt >= maxPrepareAttempts) {
+        break;
+      }
+      await closeBrowser();
+      await sleep(1000);
+    }
   }
-  await ensureTournament(page, candidate);
-  return page;
+  throw lastError;
 }
 
 async function ensureBrowser() {
-  if (browserState.context && browserState.page && !browserState.page.isClosed()) {
+  if (browserState.context && browserState.page && !browserState.page.isClosed() && !shouldRecycleBrowser()) {
     return browserState.page;
   }
+  await closeBrowser();
   browserState.context = await chromium.launchPersistentContext(userDataDir, {
     headless,
     viewport: { width: 1440, height: 1000 },
     args: ["--disable-dev-shm-usage", "--no-sandbox"],
   });
+  browserState.context.setDefaultTimeout(actionTimeoutMs);
+  browserState.context.setDefaultNavigationTimeout(navigationTimeoutMs);
   browserState.page = browserState.context.pages()[0] || await browserState.context.newPage();
+  browserState.launchedAt = Date.now();
+  bindContextLifecycle(browserState.context);
+  bindPageLifecycle(browserState.page);
   return browserState.page;
 }
 
 async function hasActiveSession(page) {
+  await maybeDismissOverlays(page);
   const logoutIndicator = await firstExisting(page, config.logoutIndicators);
   if (logoutIndicator) return true;
   const passwordField = await firstExisting(page, config.passwordSelectors);
   if (passwordField) return false;
+  const loginTrigger = await firstExisting(page, config.loginTriggerSelectors);
+  if (loginTrigger) return false;
   return false;
 }
 
 async function login(page, credentials) {
-  const trigger = await firstExisting(page, config.loginTriggerSelectors);
-  if (trigger) {
-    await trigger.click();
-    await shortWait();
+  await maybeDismissOverlays(page);
+  let userField = await waitForExisting(page, config.usernameSelectors, 8000);
+  let passwordField = await waitForExisting(page, config.passwordSelectors, 8000);
+  if (!userField || !passwordField) {
+    const trigger = await firstExisting(page, config.loginTriggerSelectors);
+    if (trigger) {
+      await clickLocator(trigger);
+      await shortWait();
+      await maybeDismissOverlays(page);
+    }
+    userField = await waitForExisting(page, config.usernameSelectors, 10000);
+    passwordField = await waitForExisting(page, config.passwordSelectors, 10000);
   }
-  const userField = await waitForExisting(page, config.usernameSelectors, 10000);
-  const passwordField = await waitForExisting(page, config.passwordSelectors, 10000);
+  if ((!userField || !passwordField) && !page.isClosed()) {
+    await page.reload({ waitUntil: "domcontentloaded", timeout: navigationTimeoutMs }).catch(() => undefined);
+    await waitForPageReady(page);
+    const trigger = await firstExisting(page, config.loginTriggerSelectors);
+    if (trigger) {
+      await clickLocator(trigger).catch(() => undefined);
+      await shortWait();
+    }
+    userField = userField || await waitForExisting(page, config.usernameSelectors, 10000);
+    passwordField = passwordField || await waitForExisting(page, config.passwordSelectors, 10000);
+  }
   if (!userField || !passwordField) {
     throw new Error("Bet9ja login form was not found.");
   }
-  await userField.fill(credentials.username);
-  await passwordField.fill(credentials.password);
+  await fillInput(userField, credentials.username);
+  await fillInput(passwordField, credentials.password);
   const submit = await firstExisting(page, config.loginSubmitSelectors);
   if (!submit) {
     throw new Error("Bet9ja login submit button was not found.");
   }
-  await submit.click();
-  await page.waitForLoadState("domcontentloaded").catch(() => undefined);
-  await shortWait();
+  await clickLocator(submit);
+  await waitForPageReady(page);
+  await maybeDismissOverlays(page);
   if (!(await hasActiveSession(page))) {
     throw new Error("Bet9ja login did not produce an active session.");
   }
@@ -261,21 +316,29 @@ async function fetchStoredCredentials() {
 }
 
 async function ensureTournament(page, candidate) {
-  const selector = await firstExisting(page, config.tournamentSelectors);
-  if (selector) {
-    await selector.scrollIntoViewIfNeeded().catch(() => undefined);
-    await selector.click().catch(() => undefined);
-    await shortWait();
-  }
-  if (candidate?.home_team) {
-    await page.getByText(new RegExp(escapeRegExp(candidate.home_team), "i")).first().waitFor({ timeout: 5000 }).catch(() => undefined);
+  for (let attempt = 0; attempt < 2; attempt += 1) {
+    await maybeDismissOverlays(page);
+    const selector = await firstExisting(page, config.tournamentSelectors);
+    if (selector) {
+      await clickLocator(selector).catch(() => undefined);
+      await shortWait();
+    }
+    if (!candidate?.home_team || await waitForTeamText(page, candidate.home_team, 5000)) {
+      return;
+    }
+    await page.reload({ waitUntil: "domcontentloaded", timeout: navigationTimeoutMs }).catch(() => undefined);
+    await waitForPageReady(page);
   }
 }
 
 async function placeCandidate(page, candidate) {
   await clearBetslip(page);
 
-  const row = await findMatchRow(page, candidate);
+  let row = await findMatchRow(page, candidate);
+  if (!row) {
+    await refreshForCandidate(page, candidate);
+    row = await findMatchRow(page, candidate);
+  }
   if (!row) {
     return { action: "skip", reason: "Match row was not found on the virtual page." };
   }
@@ -284,6 +347,17 @@ async function placeCandidate(page, candidate) {
   if (!market) {
     await expandMatchRow(row);
     market = await findOverOnePointFiveOption(row);
+  }
+  if (!market) {
+    await refreshForCandidate(page, candidate);
+    row = await findMatchRow(page, candidate);
+    if (row) {
+      market = await findOverOnePointFiveOption(row);
+      if (!market) {
+        await expandMatchRow(row);
+        market = await findOverOnePointFiveOption(row);
+      }
+    }
   }
   if (!market) {
     return { action: "skip", reason: "Over 1.5 market was not available for the selected match." };
@@ -299,8 +373,9 @@ async function placeCandidate(page, candidate) {
     };
   }
 
-  await market.click();
+  await clickLocator(market);
   await shortWait();
+  await maybeDismissOverlays(page);
 
   await fillStake(page, candidate.stake_amount);
 
@@ -316,16 +391,16 @@ async function placeCandidate(page, candidate) {
   if (!submit) {
     throw new Error("Place bet button was not found.");
   }
-  await submit.click();
+  await clickLocator(submit);
   await shortWait();
 
   const confirmation = await firstExisting(page, config.confirmationSelectors);
   if (confirmation) {
-    await confirmation.click().catch(() => undefined);
+    await clickLocator(confirmation).catch(() => undefined);
     await shortWait();
   }
 
-  const betReference = await readBetReference(page);
+  const betReference = await readBetReference(page, confirmationTimeoutMs);
   return {
     action: "placed",
     quotedOdds: quotedOdds || Number(candidate.minimum_odds),
@@ -351,8 +426,7 @@ async function findMatchRow(page, candidate) {
 async function expandMatchRow(row) {
   const expand = await firstExisting(row, config.matchExpandSelectors);
   if (!expand) return;
-  await expand.scrollIntoViewIfNeeded().catch(() => undefined);
-  await expand.click().catch(() => undefined);
+  await clickLocator(expand).catch(() => undefined);
   await shortWait();
 }
 
@@ -400,7 +474,7 @@ async function pricedOptionFromContainer(container) {
     const text = (await locator.innerText().catch(() => "")).trim();
     const value = Number(text.replace(/[^\d.]/g, ""));
     if (Number.isFinite(value) && value >= 1) {
-      return locator;
+      return await clickableAncestor(locator);
     }
   }
   return null;
@@ -411,34 +485,40 @@ async function fillStake(page, stakeAmount) {
   if (!stakeField) {
     throw new Error("Stake input was not found after selecting the market.");
   }
-  await stakeField.scrollIntoViewIfNeeded().catch(() => undefined);
-  await stakeField.click({ clickCount: 3 }).catch(() => undefined);
-  await stakeField.fill("").catch(() => undefined);
-  await stakeField.type(String(stakeAmount));
-  const typedValue = await stakeField.inputValue().catch(() => "");
-  if (!typedValue || !typedValue.replace(/[^\d.]/g, "").startsWith(String(Number(stakeAmount)))) {
-    await stakeField.press("Control+A").catch(() => undefined);
-    await stakeField.type(String(stakeAmount));
+  const expectedValue = normalizeNumeric(String(Number(stakeAmount)));
+  for (let attempt = 0; attempt < 2; attempt += 1) {
+    await fillInput(stakeField, String(stakeAmount));
+    const typedValue = normalizeNumeric(await stakeField.inputValue().catch(() => ""));
+    if (typedValue === expectedValue || typedValue.startsWith(expectedValue)) {
+      return;
+    }
   }
+  throw new Error(`Stake input value did not match ${expectedValue || String(stakeAmount)}.`);
 }
 
 async function clearBetslip(page) {
   for (let pass = 0; pass < 5; pass += 1) {
     const button = await firstExisting(page, config.betslipRemoveSelectors);
     if (!button) return;
-    await button.click().catch(() => undefined);
+    await clickLocator(button).catch(() => undefined);
     await sleep(300);
   }
 }
 
-async function readBetReference(page) {
-  for (const selector of config.betReferenceSelectors) {
-    const locator = page.locator(selector).first();
-    if (await exists(locator)) {
-      return (await locator.innerText().catch(() => "")).trim();
+async function readBetReference(page, timeoutMs = 0) {
+  const deadline = Date.now() + Math.max(0, timeoutMs);
+  while (true) {
+    for (const selector of config.betReferenceSelectors) {
+      const locator = page.locator(selector).first();
+      if (await exists(locator)) {
+        return (await locator.innerText().catch(() => "")).trim();
+      }
     }
+    if (!timeoutMs || Date.now() >= deadline) {
+      return "";
+    }
+    await sleep(selectorPollMs);
   }
-  return "";
 }
 
 function extractQuotedOdds(text) {
@@ -493,7 +573,7 @@ async function waitForExisting(root, selectors, timeoutMs) {
   while (Date.now() < deadline) {
     const locator = await firstExisting(root, selectors);
     if (locator) return locator;
-    await sleep(500);
+    await sleep(selectorPollMs);
   }
   return null;
 }
@@ -520,6 +600,12 @@ function selectorList(name, defaults) {
   return raw.split(";;").map((value) => value.trim()).filter(Boolean);
 }
 
+function numberEnv(name, fallback, minimum = 0) {
+  const value = Number(process.env[name] || fallback);
+  if (!Number.isFinite(value)) return fallback;
+  return Math.max(minimum, value);
+}
+
 function escapeRegExp(value) {
   return String(value).replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
@@ -537,14 +623,149 @@ function safeUrl(page) {
 }
 
 async function shortWait() {
-  await sleep(1500);
+  await sleep(shortDelayMs);
 }
 
 function sleep(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
+function shouldRecycleBrowser() {
+  return browserState.launchedAt > 0 && Date.now() - browserState.launchedAt >= browserRecycleMs;
+}
+
+function resetBrowserState() {
+  browserState.context = null;
+  browserState.page = null;
+  browserState.launchedAt = 0;
+}
+
+async function closeBrowser() {
+  const context = browserState.context;
+  resetBrowserState();
+  if (context) {
+    await context.close().catch(() => undefined);
+  }
+}
+
+function bindContextLifecycle(context) {
+  context.on("close", () => {
+    if (browserState.context === context) {
+      resetBrowserState();
+    }
+  });
+  context.on("page", (page) => {
+    if (!browserState.page || browserState.page.isClosed()) {
+      browserState.page = page;
+      bindPageLifecycle(page);
+    }
+  });
+}
+
+function bindPageLifecycle(page) {
+  page.on("close", () => {
+    if (browserState.page === page) {
+      browserState.page = null;
+    }
+  });
+  page.on("crash", () => {
+    if (browserState.page === page) {
+      resetBrowserState();
+    }
+  });
+  page.on("dialog", (dialog) => {
+    void dialog.dismiss().catch(() => undefined);
+  });
+}
+
+async function openVirtualHome(page) {
+  await page.goto(virtualUrl, { waitUntil: "domcontentloaded", timeout: navigationTimeoutMs });
+  await waitForPageReady(page);
+}
+
+async function waitForPageReady(page) {
+  await page.waitForLoadState("domcontentloaded", { timeout: navigationTimeoutMs }).catch(() => undefined);
+  await page.locator("body").first().waitFor({ state: "visible", timeout: pageReadyTimeoutMs }).catch(() => undefined);
+  await page.waitForLoadState("networkidle", { timeout: 2000 }).catch(() => undefined);
+  await maybeDismissOverlays(page);
+  await shortWait();
+}
+
+async function refreshForCandidate(page, candidate) {
+  await page.reload({ waitUntil: "domcontentloaded", timeout: navigationTimeoutMs }).catch(() => undefined);
+  await waitForPageReady(page);
+  await ensureTournament(page, candidate);
+}
+
+async function maybeDismissOverlays(page) {
+  for (let pass = 0; pass < 2; pass += 1) {
+    const button = await firstExisting(page, config.dismissOverlaySelectors);
+    if (!button) {
+      return;
+    }
+    await clickLocator(button).catch(() => undefined);
+    await sleep(250);
+  }
+}
+
+async function waitForTeamText(page, teamName, timeoutMs) {
+  try {
+    await page.getByText(new RegExp(escapeRegExp(teamName), "i")).first().waitFor({ timeout: timeoutMs });
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+async function clickLocator(locator, options = {}) {
+  let lastError;
+  for (let attempt = 0; attempt < 2; attempt += 1) {
+    try {
+      await locator.scrollIntoViewIfNeeded().catch(() => undefined);
+      await locator.click({ timeout: actionTimeoutMs, ...options });
+      return;
+    } catch (error) {
+      lastError = error;
+      await sleep(200);
+    }
+  }
+  throw lastError instanceof Error ? lastError : new Error("Element click failed.");
+}
+
+async function fillInput(locator, value) {
+  await locator.scrollIntoViewIfNeeded().catch(() => undefined);
+  await locator.click({ clickCount: 3, timeout: actionTimeoutMs }).catch(() => undefined);
+  await selectAll(locator);
+  await locator.fill("").catch(() => undefined);
+  if (typingDelayMs > 0) {
+    await locator.type(String(value), { delay: typingDelayMs });
+  } else {
+    await locator.fill(String(value));
+  }
+}
+
+async function selectAll(locator) {
+  await locator.press("Control+A").catch(() => undefined);
+  await locator.press("Meta+A").catch(() => undefined);
+}
+
+async function clickableAncestor(locator) {
+  const candidate = locator.locator("xpath=ancestor-or-self::button[1] | ancestor-or-self::*[@role='button'][1]").first();
+  return await exists(candidate) ? candidate : locator;
+}
+
+function normalizeNumeric(value) {
+  return String(value || "").replace(/[^\d.]/g, "");
+}
+
+for (const signal of ["SIGINT", "SIGTERM"]) {
+  process.on(signal, () => {
+    void closeBrowser().finally(() => process.exit(0));
+  });
+}
+
 main().catch(async (error) => {
   await reportRuntime({ state: "error", worker_id: workerId, last_error: normalizeError(error) });
+  await closeBrowser().catch(() => undefined);
   process.exitCode = 1;
 });
