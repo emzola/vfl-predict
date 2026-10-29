@@ -567,191 +567,13 @@ async function ensureTournament(page, candidate) {
   }
 }
 
-async function placeCandidate(page, candidate) {
-  await clearBetslip(page);
 
-  let row = await findMatchRow(page, candidate);
-  if (!row) {
-    await refreshForCandidate(page, candidate);
-    row = await findMatchRow(page, candidate);
-  }
-  if (!row) {
-    return { action: "skip", reason: "Match row was not found on the virtual page." };
-  }
 
-  let market = await findOverOnePointFiveOption(row);
-  if (!market) {
-    await expandMatchRow(row);
-    market = await findOverOnePointFiveOption(row);
-  }
-  if (!market) {
-    await refreshForCandidate(page, candidate);
-    row = await findMatchRow(page, candidate);
-    if (row) {
-      market = await findOverOnePointFiveOption(row);
-      if (!market) {
-        await expandMatchRow(row);
-        market = await findOverOnePointFiveOption(row);
-      }
-    }
-  }
-  if (!market) {
-    return { action: "skip", reason: "Over 1.5 market was not available for the selected match." };
-  }
 
-  const marketText = await market.innerText().catch(() => "");
-  const quotedOdds = extractQuotedOdds(marketText);
-  if (typeof quotedOdds === "number" && quotedOdds < Number(candidate.minimum_odds || 0)) {
-    return {
-      action: "skip",
-      reason: `Over 1.5 odds ${quotedOdds.toFixed(2)} were below the configured minimum ${Number(candidate.minimum_odds).toFixed(2)}.`,
-      observedOdds: quotedOdds,
-    };
-  }
 
-  await clickLocator(market);
-  await shortWait();
-  await maybeDismissOverlays(page);
 
-  const betslip = await waitForBetslipSelection(page, candidate);
-  await fillStake(betslip, candidate.stake_amount);
 
-  if (dryRun) {
-    return {
-      action: "placed",
-      quotedOdds: quotedOdds || Number(candidate.minimum_odds),
-      betReference: "dry-run",
-    };
-  }
 
-  const submit = await waitForExisting(betslip, config.submitSelectors, 10000);
-  if (!submit) {
-    throw new Error("Place bet button was not found.");
-  }
-  await clickLocator(submit);
-  await shortWait();
-
-  const confirmation = await firstExisting(page, config.confirmationSelectors);
-  if (confirmation) {
-    await clickLocator(confirmation).catch(() => undefined);
-    await shortWait();
-  }
-
-  const success = await waitForVisibleExisting(page, config.successSelectors, confirmationTimeoutMs);
-  if (!success) {
-    const diagnostics = await formatBetConfirmationDiagnostics(page);
-    throw new UnconfirmedBetError(
-      "Bet9ja bet outcome is unknown: the success confirmation was not detected after submitting. " + diagnostics,
-      candidate,
-      safeUrl(page),
-    );
-  }
-
-  const betReference = await readBetReference(page, confirmationTimeoutMs);
-  return {
-    action: "placed",
-    quotedOdds: quotedOdds || Number(candidate.minimum_odds),
-    betReference,
-  };
-}
-
-async function findMatchRow(page, candidate) {
-  const homePattern = new RegExp(escapeRegExp(candidate.home_team), "i");
-  const awayPattern = new RegExp(escapeRegExp(candidate.away_team), "i");
-  for (const root of searchRoots(page)) {
-    const homeText = root.getByText(homePattern);
-    const awayText = root.getByText(awayPattern);
-    for (const selector of config.matchRowSelectors) {
-      const locator = root.locator(selector).filter({ has: homeText }).filter({ has: awayText }).first();
-      if (await isVisible(locator)) {
-        await locator.scrollIntoViewIfNeeded().catch(() => undefined);
-        return locator;
-      }
-    }
-  }
-  return null;
-}
-
-async function expandMatchRow(row) {
-  const expand = await firstExisting(row, config.matchExpandSelectors);
-  if (!expand) return;
-  await clickLocator(expand).catch(() => undefined);
-  await shortWait();
-}
-
-async function findOverOnePointFiveOption(row) {
-  const scopes = [row, row.locator("xpath=following-sibling::*").first()];
-  for (const scope of scopes) {
-    const lineRow = await findTotalGoalsOnePointFiveLine(scope);
-    if (lineRow) {
-      const option = await pricedOptionFromContainer(lineRow);
-      if (option) return option;
-    }
-    const direct = await firstExisting(scope, config.overMarketSelectors);
-    if (direct) {
-      const pricedDirect = await pricedOptionFromContainer(direct);
-      if (pricedDirect) return pricedDirect;
-      return direct;
-    }
-  }
-  return null;
-}
-
-async function findTotalGoalsOnePointFiveLine(scope) {
-  const lineSelectors = [
-    'tr',
-    '[role="row"]',
-    'div',
-  ];
-  for (const selector of lineSelectors) {
-    const locator = scope.locator(selector)
-      .filter({ hasText: /1[\.,]5/ })
-      .filter({ hasText: /over/i })
-      .first();
-    if (await isVisible(locator)) {
-      return locator;
-    }
-  }
-  return null;
-}
-
-async function pricedOptionFromContainer(container) {
-  const oddsTexts = container.locator('text=/\\d+\\.\d+/');
-  const count = await safeCount(oddsTexts);
-  for (let index = count - 1; index >= 0; index -= 1) {
-    const locator = oddsTexts.nth(index);
-    if (!(await isVisible(locator))) continue;
-    const text = (await locator.innerText().catch(() => "")).trim();
-    const value = Number(text.replace(/[^\d.]/g, ""));
-    if (Number.isFinite(value) && value >= 1) {
-      return await clickableAncestor(locator);
-    }
-  }
-  return null;
-}
-
-async function waitForBetslipSelection(page, candidate) {
-  const deadline = Date.now() + 10000;
-  while (Date.now() < deadline) {
-    const betslip = await findBetslipScope(page);
-    if (betslip) {
-      const selectedMarket = await firstVisibleMatch(betslip, config.overMarketSelectors);
-      const text = await betslip.innerText().catch(() => "");
-      if (selectedMarket && /over\s*1[\.,]5/i.test(text)) {
-        return betslip;
-      }
-    }
-    await sleep(selectorPollMs);
-  }
-  throw new Error("Bet9ja betslip did not show the selected Over 1.5 market for " + candidate.home_team + " - " + candidate.away_team + ".");
-}
-
-async function findBetslipScope(page) {
-  const header = await firstVisibleMatch(page, config.betslipHeaderSelectors);
-  if (!header) return null;
-  const panel = header.locator("xpath=ancestor::*[.//input and .//button][1]").first();
-  return await isVisible(panel) ? panel : page;
-}
 
 async function fillStake(betslip, stakeAmount) {
   const stakeField = await waitForExisting(betslip, config.stakeSelectors, 10000);
@@ -769,23 +591,6 @@ async function fillStake(betslip, stakeAmount) {
   throw new Error(`Stake input value did not match ${expectedValue || String(stakeAmount)}.`);
 }
 
-async function clearBetslip(page) {
-  const betslip = await findBetslipScope(page);
-  const scope = betslip || page;
-  for (let pass = 0; pass < 5; pass += 1) {
-    const button = await firstExisting(scope, config.betslipRemoveSelectors);
-    if (!button) break;
-    await clickLocator(button).catch(() => undefined);
-    await sleep(300);
-  }
-  const header = await firstVisibleMatch(page, config.betslipHeaderSelectors);
-  if (header) {
-    const text = await header.locator("xpath=..").innerText().catch(() => "");
-    if (/\(\s*[1-9]\d*\s*\)/.test(text)) {
-      throw new Error("Existing Bet9ja betslip could not be cleared safely.");
-    }
-  }
-}
 
 async function formatBetConfirmationDiagnostics(page) {
   const bodyText = await getSanitizedBodyText(page, "");
@@ -811,10 +616,6 @@ async function readBetReference(page, timeoutMs = 0) {
   }
 }
 
-function extractQuotedOdds(text) {
-  const matches = [...String(text || "").matchAll(/(\\d+\\.\\d+)/g)].map((item) => Number(item)).filter(Number.isFinite);
-  return matches.length > 0 ? matches[matches.length - 1] : undefined;
-}
 
 async function reportRuntime(payload) {
   try {
@@ -1159,6 +960,321 @@ async function clickableAncestor(locator) {
 
 function normalizeNumeric(value) {
   return String(value || "").replace(/[^\d.]/g, "");
+}
+
+// bet9ja-fixes.mjs - drop-in replacements for index.mjs
+//
+// HOW TO APPLY
+//   1. In index.mjs delete these functions: extractQuotedOdds, findMatchRow, expandMatchRow,
+//      findOverOnePointFiveOption, findTotalGoalsOnePointFiveLine, pricedOptionFromContainer,
+//      waitForBetslipSelection, findBetslipScope, clearBetslip, placeCandidate.
+//   2. Paste this whole file's contents anywhere above the final `main().catch(...)` call.
+//
+// Written from screenshots only. The selectors are structure-agnostic (they key off visible text and
+// geometry, not class names) but have NOT been run against the live DOM.
+
+const OVER_15_BAR = /^\s*over\s*1[.,]5\s*\d+[.,]\d{2}\s*$/i; // the green bar: "over 1.5 ..... 1.30"
+const EXPANDER = /^\s*\+\s*\d{1,3}\s*$/; // the "+21" button on each match row
+const ROW_EXPANDER = /(?:^|\s)\+\d{1,3}(?:\s|$)/; // same, as a substring test (excludes "(+0.75)")
+const TIMER = 'text=/^\\s*\\d{1,2}:\\d{2}\\s*$/'; // "02:00" betting countdown
+const minSecondsLeft = numberEnv("AUTOBET_MIN_SECONDS_LEFT", 20, 0);
+const verifyRound = /^true$/i.test(process.env.BET9JA_VERIFY_ROUND || "false");
+
+// ---------- odds parsing ----------
+
+function extractQuotedOdds(text) {
+  const matches = [...String(text || "").matchAll(/\d+\.\d{2}/g)].map((m) => Number(m[0])).filter(Number.isFinite);
+  return matches.length > 0 ? matches[matches.length - 1] : undefined;
+}
+
+// Strips the "over 1.5" label first, so "over 1.51.30" (label and price in sibling spans) still reads 1.30.
+async function readOptionOdds(option) {
+  const raw = String((await option.textContent().catch(() => "")) || "");
+  return extractQuotedOdds(raw.replace(/^\s*over\s*1[.,]5/i, " "));
+}
+
+async function readBetslipOdds(betslip) {
+  const text = String((await betslip.innerText().catch(() => "")) || "").replace(/\s+/g, " ");
+  const m = text.match(/over\s*1[.,]5\s*(\d+\.\d{2})/i);
+  return m ? Number(m[1]) : undefined;
+}
+
+async function readTicketStake(betslip) {
+  const text = String((await betslip.innerText().catch(() => "")) || "").replace(/\s+/g, " ");
+  const m = text.match(/ticket\s*stake\s*(?:NGN)?\s*([\d,]+(?:\.\d+)?)/i);
+  return m ? Number(m[1].replace(/,/g, "")) : undefined;
+}
+
+async function readSecondsLeft(page) {
+  const match = await firstVisibleMatch(page, [TIMER]);
+  if (!match) return null;
+  const text = String((await match.locator.textContent().catch(() => "")) || "").trim();
+  const [minutes, seconds] = text.split(":").map(Number);
+  return Number.isFinite(minutes) && Number.isFinite(seconds) ? minutes * 60 + seconds : null;
+}
+
+async function waitUntil(predicate, timeoutMs) {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    if (await predicate()) return true;
+    await sleep(selectorPollMs);
+  }
+  return false;
+}
+
+// ---------- match row + Over 1.5 ----------
+
+// Team names also appear in the results list (top) and in the betslip card. Only the real table row also
+// contains the "+21" expander, so requiring it keeps the other two out. .last() = innermost matching element.
+async function findMatchRow(page, candidate) {
+  const home = new RegExp(escapeRegExp(candidate.home_team), "i");
+  const away = new RegExp(escapeRegExp(candidate.away_team), "i");
+  for (const root of searchRoots(page)) {
+    for (const tag of ["tr", "[role='row']", "div", "li"]) {
+      const rows = root.locator(tag).filter({ hasText: home }).filter({ hasText: away }).filter({ hasText: ROW_EXPANDER });
+      if (!(await safeCount(rows))) continue;
+      const row = rows.last();
+      if (!(await isVisible(row))) continue;
+      await row.scrollIntoViewIfNeeded().catch(() => undefined);
+      return row;
+    }
+  }
+  return null;
+}
+
+async function expandMatchRow(row) {
+  const expander = row.getByText(EXPANDER).last();
+  if (!(await isVisible(expander))) return false;
+  await clickLocator(expander).catch(() => undefined);
+  await shortWait();
+  return true;
+}
+
+// The expanded panel renders directly below its row. Pick the nearest "over 1.5" bar below the row, and
+// reject it if another row's "+NN" button sits between (that bar belongs to a different, expanded row).
+async function findOverOnePointFiveOption(page, row) {
+  const rowBox = await row.boundingBox().catch(() => null);
+  if (!rowBox) return null;
+  const rowBottom = rowBox.y + rowBox.height - 2;
+  let best = null;
+  for (const root of searchRoots(page)) {
+    const expanderBoxes = [];
+    const expanders = root.getByText(EXPANDER);
+    const expanderCount = await safeCount(expanders);
+    for (let i = 0; i < expanderCount; i += 1) {
+      const box = await expanders.nth(i).boundingBox().catch(() => null);
+      if (box) expanderBoxes.push(box);
+    }
+    const bars = root.getByText(OVER_15_BAR);
+    const barCount = await safeCount(bars);
+    for (let i = 0; i < barCount; i += 1) {
+      const bar = bars.nth(i);
+      if (!(await isVisible(bar))) continue;
+      const box = await bar.boundingBox().catch(() => null);
+      if (!box || box.y < rowBottom) continue;
+      if (expanderBoxes.some((e) => e.y > rowBottom && e.y < box.y)) continue;
+      const distance = box.y - rowBox.y;
+      if (!best || distance < best.distance) best = { bar, distance };
+    }
+  }
+  return best ? best.bar : null;
+}
+
+async function locateOverMarket(page, candidate) {
+  for (let attempt = 0; attempt < 2; attempt += 1) {
+    const row = await findMatchRow(page, candidate);
+    if (!row) {
+      if (attempt === 0) {
+        await refreshForCandidate(page, candidate);
+        continue;
+      }
+      return { skipReason: "Match row was not found on the virtual page." };
+    }
+    let market = await findOverOnePointFiveOption(page, row);
+    if (!market && (await expandMatchRow(row))) {
+      for (let poll = 0; poll < 6 && !market; poll += 1) {
+        await sleep(selectorPollMs);
+        market = await findOverOnePointFiveOption(page, row);
+      }
+    }
+    if (market) return { row, market };
+    if (attempt === 0) await refreshForCandidate(page, candidate);
+  }
+  return { skipReason: "Over 1.5 market was not available for the selected match." };
+}
+
+// ---------- betslip ----------
+
+// Smallest element holding the "Betslip (n)" tab AND either "Ticket stake" or "No selection": the whole
+// right-hand panel (items, stake box, Place bet button).
+async function findBetslipScope(page) {
+  for (const root of searchRoots(page)) {
+    const panel = root
+      .locator("div, section, aside")
+      .filter({ has: root.getByText(/^\s*betslip\s*\(\s*\d+\s*\)\s*$/i) })
+      .filter({ hasText: /ticket\s*stake|no\s*selection/i })
+      .last();
+    if (await isVisible(panel)) return panel;
+  }
+  return null;
+}
+
+async function betslipCount(page) {
+  const header = await firstVisibleMatch(page, config.betslipHeaderSelectors);
+  if (!header) return 0;
+  const text = String((await header.locator.innerText().catch(() => "")) || "");
+  return Number((text.match(/\(\s*(\d+)\s*\)/) || [])[1] || 0);
+}
+
+async function clearBetslip(page) {
+  for (let pass = 0; pass < 5; pass += 1) {
+    if ((await betslipCount(page)) === 0) return;
+    const betslip = await findBetslipScope(page);
+    if (!betslip) break;
+
+    // 1) selectors from config / env
+    const configured = await firstExisting(betslip, config.betslipRemoveSelectors);
+    if (configured) {
+      await clickLocator(configured).catch(() => undefined);
+    } else {
+      // 2) the selection card = innermost element with the "Season N - Matchday N" line and a price
+      const card = betslip
+        .locator("div")
+        .filter({ hasText: /season\s*\d+\s*-\s*match\s*day\s*\d+/i })
+        .filter({ hasText: /\d+\.\d{2}/ })
+        .last();
+      await card.scrollIntoViewIfNeeded().catch(() => undefined);
+      const guess = card.locator('[class*="close" i], [class*="remove" i], [class*="delete" i], [class*="clear" i]').first();
+      if (await isVisible(guess)) {
+        await clickLocator(guess).catch(() => undefined);
+      } else {
+        // 3) last resort: the round X icon sits in the card's top-right corner
+        const box = await card.boundingBox().catch(() => null);
+        if (box) await page.mouse.click(box.x + box.width * 0.935, box.y + Math.min(box.height * 0.17, 26));
+      }
+    }
+    await sleep(500);
+  }
+  if ((await betslipCount(page)) > 0) {
+    throw new Error("Existing Bet9ja betslip could not be cleared safely.");
+  }
+}
+
+async function waitForBetslipSelection(page, candidate) {
+  const teams = new RegExp(`${escapeRegExp(candidate.home_team)}\\s*-\\s*${escapeRegExp(candidate.away_team)}`, "i");
+  const roundPattern =
+    candidate.season_id && candidate.round
+      ? new RegExp(`${escapeRegExp(String(candidate.season_id))}\\s*-\\s*match\\s*day\\s*${Number(candidate.round)}\\b`, "i")
+      : null;
+  const deadline = Date.now() + 10000;
+  let lastText = "";
+  while (Date.now() < deadline) {
+    const betslip = await findBetslipScope(page);
+    if (betslip) {
+      lastText = String((await betslip.innerText().catch(() => "")) || "").replace(/\s+/g, " ");
+      const count = (lastText.match(/betslip\s*\(\s*(\d+)\s*\)/i) || [])[1];
+      if (count === "1" && teams.test(lastText) && /over\s*1[.,]5/i.test(lastText)) {
+        if (verifyRound && roundPattern && !roundPattern.test(lastText)) {
+          await clearBetslip(page).catch(() => undefined);
+          throw new Error(`Betslip is for a different season/matchday than ${candidate.season_id} round ${candidate.round}: ${JSON.stringify(lastText.slice(0, 300))}`);
+        }
+        return betslip;
+      }
+    }
+    await sleep(selectorPollMs);
+  }
+  throw new Error(
+    `Bet9ja betslip did not show Over 1.5 for ${candidate.home_team} - ${candidate.away_team}. Betslip text: ${JSON.stringify(lastText.slice(0, 300))}`,
+  );
+}
+
+// ---------- main placement flow ----------
+
+async function placeCandidate(page, candidate) {
+  await clearBetslip(page);
+
+  const secondsLeft = await readSecondsLeft(page);
+  if (secondsLeft !== null && secondsLeft < minSecondsLeft) {
+    return { action: "skip", reason: `Only ${secondsLeft}s left in the betting window.` };
+  }
+
+  const located = await locateOverMarket(page, candidate);
+  if (located.skipReason) {
+    return { action: "skip", reason: located.skipReason };
+  }
+
+  const minimumOdds = Number(candidate.minimum_odds || 0);
+  const tableOdds = await readOptionOdds(located.market);
+  if (typeof tableOdds === "number" && tableOdds < minimumOdds) {
+    return {
+      action: "skip",
+      reason: `Over 1.5 odds ${tableOdds.toFixed(2)} were below the configured minimum ${minimumOdds.toFixed(2)}.`,
+      observedOdds: tableOdds,
+    };
+  }
+
+  await clickLocator(located.market);
+  await shortWait();
+  await maybeDismissOverlays(page);
+
+  const betslip = await waitForBetslipSelection(page, candidate);
+
+  // The betslip shows the price that will actually be staked; trust it over the table.
+  const slipOdds = await readBetslipOdds(betslip);
+  const effectiveOdds = typeof slipOdds === "number" ? slipOdds : tableOdds;
+  if (typeof effectiveOdds === "number" && effectiveOdds < minimumOdds) {
+    await clearBetslip(page).catch(() => undefined);
+    return {
+      action: "skip",
+      reason: `Over 1.5 odds ${effectiveOdds.toFixed(2)} in the betslip were below the configured minimum ${minimumOdds.toFixed(2)}.`,
+      observedOdds: effectiveOdds,
+    };
+  }
+
+  await fillStake(betslip, candidate.stake_amount);
+  // "Place bet NGN 0.00" stays grey until the ticket stake registers, so confirm it did.
+  const stakeRegistered = await waitUntil(async () => (await readTicketStake(betslip)) === Number(candidate.stake_amount), 4000);
+  if (!stakeRegistered) {
+    throw new Error(`Betslip ticket stake did not update to ${candidate.stake_amount}.`);
+  }
+
+  if (dryRun) {
+    return {
+      action: "placed",
+      quotedOdds: effectiveOdds || minimumOdds,
+      betReference: "dry-run",
+    };
+  }
+
+  const submit = await waitForExisting(betslip, config.submitSelectors, 10000);
+  if (!submit) {
+    throw new Error("Place bet button was not found.");
+  }
+  await clickLocator(submit);
+  await shortWait();
+
+  const confirmation = await firstExisting(page, config.confirmationSelectors);
+  if (confirmation) {
+    await clickLocator(confirmation).catch(() => undefined);
+    await shortWait();
+  }
+
+  const success = await waitForVisibleExisting(page, config.successSelectors, confirmationTimeoutMs);
+  if (!success) {
+    const diagnostics = await formatBetConfirmationDiagnostics(page);
+    throw new UnconfirmedBetError(
+      "Bet9ja bet outcome is unknown: the success confirmation was not detected after submitting. " + diagnostics,
+      candidate,
+      safeUrl(page),
+    );
+  }
+
+  const betReference = await readBetReference(page, confirmationTimeoutMs);
+  return {
+    action: "placed",
+    quotedOdds: effectiveOdds || minimumOdds,
+    betReference,
+  };
 }
 
 for (const signal of ["SIGINT", "SIGTERM"]) {
