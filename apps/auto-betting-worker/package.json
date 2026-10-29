@@ -4,9 +4,12 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "start": "node index.mjs"
+    "start": "node index.mjs",
+    "start:xvfb": "xvfb-run --auto-servernum --server-args=\"-screen 0 1440x1000x24\" node index.mjs"
   },
   "dependencies": {
-    "playwright": "1.55.1"
+    "playwright": "1.55.1",
+    "playwright-extra": "^4.3.6",
+    "puppeteer-extra-plugin-stealth": "^2.11.2"
   }
 }

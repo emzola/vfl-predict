@@ -1,6 +1,9 @@
 import os from "node:os";
 import path from "node:path";
-import { chromium } from "playwright";
+import { chromium } from "playwright-extra";
+import stealthPlugin from "puppeteer-extra-plugin-stealth";
+
+chromium.use(stealthPlugin());
 
 const workerId = process.env.AUTOBET_WORKER_ID || `${os.hostname()}-${process.pid}`;
 const intervalMs = Math.max(10, Number(process.env.AUTOBET_INTERVAL_SECONDS || 10)) * 1000;
@@ -216,11 +219,20 @@ async function ensureBrowser() {
     return browserState.page;
   }
   await closeBrowser();
+  
   browserState.context = await chromium.launchPersistentContext(userDataDir, {
     headless,
     viewport: { width: 1440, height: 1000 },
-    args: ["--disable-dev-shm-usage", "--no-sandbox"],
+    args: [
+      "--disable-dev-shm-usage", 
+      "--no-sandbox",
+      "--disable-setuid-sandbox",
+      "--disable-blink-features=AutomationControlled" 
+    ],
+    deviceScaleFactor: 1,
+    userAgent: "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36"
   });
+  
   browserState.context.setDefaultTimeout(actionTimeoutMs);
   browserState.context.setDefaultNavigationTimeout(navigationTimeoutMs);
   browserState.page = browserState.context.pages()[0] || await browserState.context.newPage();
@@ -431,7 +443,7 @@ async function expandMatchRow(row) {
 }
 
 async function findOverOnePointFiveOption(row) {
-  const scopes = [row, row.locator("xpath=following-sibling::*[1]").first()];
+  const scopes = [row, row.locator("xpath=following-sibling::*").first()];
   for (const scope of scopes) {
     const direct = await firstExisting(scope, config.overMarketSelectors);
     if (direct) {
@@ -467,7 +479,7 @@ async function findTotalGoalsOnePointFiveLine(scope) {
 }
 
 async function pricedOptionFromContainer(container) {
-  const oddsTexts = container.locator('text=/\\d+\\.\\d+/');
+  const oddsTexts = container.locator('text=/\\d+\\.\d+/');
   const count = await safeCount(oddsTexts);
   for (let index = count - 1; index >= 0; index -= 1) {
     const locator = oddsTexts.nth(index);
@@ -522,7 +534,7 @@ async function readBetReference(page, timeoutMs = 0) {
 }
 
 function extractQuotedOdds(text) {
-  const matches = [...String(text || "").matchAll(/(\d+\.\d+)/g)].map((item) => Number(item[1])).filter(Number.isFinite);
+  const matches = [...String(text || "").matchAll(/(\\d+\\.\\d+)/g)].map((item) => Number(item)).filter(Number.isFinite);
   return matches.length > 0 ? matches[matches.length - 1] : undefined;
 }
 
@@ -750,7 +762,7 @@ async function selectAll(locator) {
 }
 
 async function clickableAncestor(locator) {
-  const candidate = locator.locator("xpath=ancestor-or-self::button[1] | ancestor-or-self::*[@role='button'][1]").first();
+  const candidate = locator.locator("xpath=ancestor-or-self::button | ancestor-or-self::*[@role='button']").first();
   return await exists(candidate) ? candidate : locator;
 }
 
