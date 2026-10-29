@@ -227,7 +227,8 @@ async function ensureBrowser() {
       "--disable-dev-shm-usage", 
       "--no-sandbox",
       "--disable-setuid-sandbox",
-      "--disable-blink-features=AutomationControlled" 
+      "--disable-blink-features=AutomationControlled",
+      "--disable-gpu" 
     ],
     deviceScaleFactor: 1,
     userAgent: "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36"
