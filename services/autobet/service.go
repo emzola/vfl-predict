@@ -452,7 +452,7 @@ SET state = $2,
     last_login_at = $9,
     last_error = NULLIF($10, ''),
     updated_at = $11
-WHERE runtime_key = $1`, primaryKey, state, truncate(update.WorkerID, 128), update.CurrentSeasonID, update.CurrentRound, update.CurrentMatchID, truncate(update.CurrentURL, 512), heartbeat, nullableTimestamp(loginAt), truncate(update.LastError, 1024), s.now())
+WHERE runtime_key = $1`, primaryKey, state, truncate(update.WorkerID, 128), update.CurrentSeasonID, update.CurrentRound, update.CurrentMatchID, truncate(update.CurrentURL, 512), heartbeat, nullableTimestamp(loginAt), truncate(update.LastError, 8192), s.now())
 	return err
 }
 

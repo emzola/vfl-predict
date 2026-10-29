@@ -213,7 +213,7 @@ export default function AutoBettingPage() {
               <div><p className="text-slate-500">Current season / round</p><p className="mt-1">{data.runtime.current_season_id || data.current_season_id || "—"}{data.runtime.current_round ? " · Round " + data.runtime.current_round : ""}</p></div>
               <div><p className="text-slate-500">Worker id</p><p className="mt-1 break-all">{data.runtime.worker_id || "—"}</p></div>
             </div>
-            {data.runtime.last_error && <p className="mt-4 rounded-xl border border-danger/30 bg-danger/10 px-4 py-3 text-sm text-rose-200">{data.runtime.last_error}</p>}
+            {data.runtime.last_error && <p className="mt-4 max-h-80 overflow-auto whitespace-pre-wrap break-words rounded-xl border border-danger/30 bg-danger/10 px-4 py-3 text-sm text-rose-200">{data.runtime.last_error}</p>}
             {summary?.paused && <p className="mt-4 rounded-xl border border-warning/30 bg-warning/10 px-4 py-3 text-sm text-amber-100">{summary.pause_reason}</p>}
           </div>
 

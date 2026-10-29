@@ -78,9 +78,11 @@ services:
       context: ../..
       dockerfile: infra/docker/Dockerfile.autobet
     restart: unless-stopped
+    init: true
     environment:
       INTERNAL_API_BASE_URL: http://api:8090
       INTERNAL_API_TOKEN: ${INTERNAL_API_TOKEN:?Set INTERNAL_API_TOKEN in an untracked .env file or the shell}
+      DEBUG: ${AUTOBET_DEBUG:-}
       AUTOBET_INTERVAL_SECONDS: ${AUTOBET_INTERVAL_SECONDS:-10}
       AUTOBET_HEADLESS: ${AUTOBET_HEADLESS:-true}
       AUTOBET_DRY_RUN: ${AUTOBET_DRY_RUN:-true}

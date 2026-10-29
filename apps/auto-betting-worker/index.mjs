@@ -124,6 +124,7 @@ async function main() {
       const task = await apiRequest("/internal/v1/auto-betting/task");
       await handleTask(task);
     } catch (error) {
+      await closeBrowser().catch(() => undefined);
       await reportRuntime({ state: "error", worker_id: workerId, last_error: normalizeError(error) });
     }
     await sleep(intervalMs);
@@ -219,21 +220,27 @@ async function ensureBrowser() {
     return browserState.page;
   }
   await closeBrowser();
-  
-  browserState.context = await chromium.launchPersistentContext(userDataDir, {
-    headless,
-    viewport: { width: 1440, height: 1000 },
-    args: [
-      "--disable-dev-shm-usage", 
-      "--no-sandbox",
-      "--disable-setuid-sandbox",
-      "--disable-blink-features=AutomationControlled",
-      "--disable-gpu" 
-    ],
-    deviceScaleFactor: 1,
-    userAgent: "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36"
-  });
-  
+
+  try {
+    browserState.context = await chromium.launchPersistentContext(userDataDir, {
+      headless,
+      viewport: { width: 1440, height: 1000 },
+      args: [
+        "--disable-dev-shm-usage",
+        "--no-sandbox",
+        "--disable-setuid-sandbox",
+        "--disable-blink-features=AutomationControlled",
+        "--disable-gpu"
+      ],
+      deviceScaleFactor: 1,
+      userAgent: "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36"
+    });
+  } catch (error) {
+    const display = process.env.DISPLAY || "unset";
+    const message = normalizeError(error);
+    throw new Error(`Chromium headed launch failed for user data directory ${userDataDir} with DISPLAY=${display}. ${message}`);
+  }
+
   browserState.context.setDefaultTimeout(actionTimeoutMs);
   browserState.context.setDefaultNavigationTimeout(navigationTimeoutMs);
   browserState.page = browserState.context.pages()[0] || await browserState.context.newPage();

@@ -237,9 +237,11 @@ services:
   auto-betting-worker:
     image: ${GHCR_IMAGE_PREFIX:?Set GHCR_IMAGE_PREFIX, for example ghcr.io/owner/repository}/vfl-autobet:${RELEASE_SHA:?Set RELEASE_SHA to an immutable Git commit SHA}
     restart: unless-stopped
+    init: true
     environment:
       INTERNAL_API_BASE_URL: http://api:8090
       INTERNAL_API_TOKEN: ${INTERNAL_API_TOKEN:?Set INTERNAL_API_TOKEN in the VPS environment file}
+      DEBUG: ${AUTOBET_DEBUG:-}
       AUTOBET_INTERVAL_SECONDS: ${AUTOBET_INTERVAL_SECONDS:-10}
       AUTOBET_HEADLESS: ${AUTOBET_HEADLESS:-true}
       AUTOBET_DRY_RUN: ${AUTOBET_DRY_RUN:-false}
