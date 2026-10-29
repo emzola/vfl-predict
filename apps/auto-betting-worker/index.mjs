@@ -1038,8 +1038,54 @@ async function waitForPageReady(page) {
   await page.waitForLoadState("domcontentloaded", { timeout: navigationTimeoutMs }).catch(() => undefined);
   await page.locator("body").first().waitFor({ state: "visible", timeout: pageReadyTimeoutMs }).catch(() => undefined);
   await page.waitForLoadState("networkidle", { timeout: 2000 }).catch(() => undefined);
+  if (!(await waitForRenderedContent(page, pageReadyTimeoutMs))) {
+    throw new Error(`Bet9ja page did not render visible content. ${await formatPageRenderDiagnostics(page)}`);
+  }
   await maybeDismissOverlays(page);
   await shortWait();
+}
+
+async function waitForRenderedContent(page, timeoutMs) {
+  const deadline = Date.now() + timeoutMs;
+  const readySelectors = [
+    ...config.loginTriggerSelectors,
+    ...config.logoutIndicators,
+    ...config.tournamentSelectors,
+    'text=/place\\s+your\\s+bets/i',
+    'text=/register/i',
+  ];
+  while (Date.now() < deadline) {
+    if (await firstVisibleMatch(page, readySelectors)) {
+      return true;
+    }
+    for (const root of searchRoots(page)) {
+      const body = root.locator("body").first();
+      if (!(await isVisible(body))) continue;
+      const text = (await body.innerText().catch(() => "")).replace(/\\s+/g, " ").trim();
+      if (text.length >= 40) {
+        return true;
+      }
+    }
+    await sleep(selectorPollMs);
+  }
+  return false;
+}
+
+async function formatPageRenderDiagnostics(page) {
+  const [title, bodyText, readyState, htmlLengths] = await Promise.all([
+    getPageTitle(page),
+    getSanitizedBodyText(page),
+    page.evaluate(() => document.readyState).catch(() => "unknown"),
+    Promise.all(searchRoots(page).map((root) => root.locator("body").first().evaluate((body) => body.innerHTML.length).catch(() => 0))),
+  ]);
+  return [
+    `url=${safeUrl(page) || "unknown"}`,
+    `title=${JSON.stringify(title)}`,
+    `ready_state=${readyState}`,
+    `frames=${JSON.stringify(frameUrls(page))}`,
+    `body_html_lengths=${JSON.stringify(htmlLengths)}`,
+    `body=${JSON.stringify(bodyText)}`,
+  ].join(" ");
 }
 
 async function refreshForCandidate(page, candidate) {
