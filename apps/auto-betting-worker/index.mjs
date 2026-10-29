@@ -38,14 +38,35 @@ const config = {
     'a:has-text("Login")',
     'text=/\\blog\\s*in\\b/i',
   ]),
+  loginPanelLabelSelectors: selectorList("BET9JA_LOGIN_PANEL_LABEL_SELECTORS", [
+    'text=/^\\s*username\\s*$/i',
+    'text=/^\\s*password\\s*$/i',
+  ]),
   usernameSelectors: selectorList("BET9JA_USERNAME_SELECTORS", [
-    'input[name="username"]',
-    'input[name="userName"]',
+    'input[autocomplete="username"]',
+    'input[name="username" i]',
+    'input[name="userName" i]',
+    'input[name*="phone" i]',
+    'input[name*="mobile" i]',
+    'input[id*="username" i]',
+    'input[id*="phone" i]',
+    'input[aria-label*="username" i]',
+    'input[aria-label*="phone" i]',
+    'input[aria-label*="mobile" i]',
     'input[placeholder*="username" i]',
+    'input[placeholder*="phone" i]',
+    'input[placeholder*="mobile" i]',
+    'input[type="tel"]',
+    'input[inputmode="numeric"]',
+    'input[type="number"]',
     'input[type="text"]',
+    'input:not([type])',
   ]),
   passwordSelectors: selectorList("BET9JA_PASSWORD_SELECTORS", [
+    'input[autocomplete="current-password"]',
     'input[name="password"]',
+    'input[id*="password" i]',
+    'input[aria-label*="password" i]',
     'input[type="password"]',
     'input[placeholder*="password" i]',
   ]),
@@ -332,19 +353,16 @@ async function hasActiveSession(page) {
 
 async function login(page, credentials) {
   await maybeDismissOverlays(page);
-  let userField = await waitForExisting(page, config.usernameSelectors, 8000);
-  let passwordField = await waitForExisting(page, config.passwordSelectors, 8000);
-  if (!userField || !passwordField) {
+  let fields = await findLoginFields(page, 8000);
+  if (!fields.userField || !fields.passwordField) {
     const trigger = await firstExisting(page, config.loginTriggerSelectors);
     if (trigger) {
       await clickLocator(trigger);
       await shortWait();
-      await maybeDismissOverlays(page);
     }
-    userField = await waitForExisting(page, config.usernameSelectors, 10000);
-    passwordField = await waitForExisting(page, config.passwordSelectors, 10000);
+    fields = await findLoginFields(page, 10000);
   }
-  if ((!userField || !passwordField) && !page.isClosed()) {
+  if ((!fields.userField || !fields.passwordField) && !page.isClosed()) {
     await page.reload({ waitUntil: "domcontentloaded", timeout: navigationTimeoutMs }).catch(() => undefined);
     await waitForPageReady(page);
     const trigger = await firstExisting(page, config.loginTriggerSelectors);
@@ -352,11 +370,12 @@ async function login(page, credentials) {
       await clickLocator(trigger).catch(() => undefined);
       await shortWait();
     }
-    userField = userField || await waitForExisting(page, config.usernameSelectors, 10000);
-    passwordField = passwordField || await waitForExisting(page, config.passwordSelectors, 10000);
+    fields = await findLoginFields(page, 10000);
   }
+  const { userField, passwordField } = fields;
   if (!userField || !passwordField) {
-    throw new Error("Bet9ja login form was not found.");
+    const snapshot = await inspectSession(page);
+    throw new Error(`Bet9ja login form was not found. ${await formatLoginDiagnostics(page, credentials, snapshot)}`);
   }
   await fillInput(userField, credentials.username);
   await fillInput(passwordField, credentials.password);
@@ -364,7 +383,8 @@ async function login(page, credentials) {
   const loginScope = await findLoginScope(userField, passwordField);
   const scopedSubmit = await firstExisting(loginScope, config.loginSubmitSelectors);
   if (!scopedSubmit) {
-    throw new Error("Bet9ja login submit button was not found inside the login form.");
+    const snapshot = await inspectSession(page);
+    throw new Error(`Bet9ja login submit button was not found inside the login form. ${await formatLoginDiagnostics(page, credentials, snapshot, loginUrl)}`);
   }
   await clickLocator(scopedSubmit);
   await waitForPageReady(page);
@@ -382,6 +402,44 @@ async function login(page, credentials) {
     last_login_at: new Date().toISOString(),
     last_heartbeat_at: new Date().toISOString(),
   });
+}
+
+async function findLoginFields(page, timeoutMs) {
+  const deadline = Date.now() + timeoutMs;
+  let latest = { scope: page, userField: null, passwordField: null };
+  while (Date.now() < deadline) {
+    const scope = await findLoginPanel(page);
+    const userField = await firstExisting(scope, config.usernameSelectors);
+    const passwordField = await firstExisting(scope, config.passwordSelectors);
+    latest = { scope, userField, passwordField };
+    if (userField && passwordField) {
+      return latest;
+    }
+    await sleep(selectorPollMs);
+  }
+  return latest;
+}
+
+async function findLoginPanel(page) {
+  for (const selector of config.loginPanelLabelSelectors) {
+    for (const root of searchRoots(page)) {
+      const label = root.locator(selector).first();
+      if (!(await isVisible(label))) continue;
+      const candidates = [
+        label.locator("xpath=ancestor::form[1]").first(),
+        label.locator("xpath=ancestor::*[.//input and (.//button or .//input[@type='submit'] or .//*[@role='button'])][1]").first(),
+      ];
+      for (const candidate of candidates) {
+        if (!(await isVisible(candidate))) continue;
+        const userField = await firstExisting(candidate, config.usernameSelectors);
+        const passwordField = await firstExisting(candidate, config.passwordSelectors);
+        if (userField && passwordField) {
+          return candidate;
+        }
+      }
+    }
+  }
+  return page;
 }
 
 async function findLoginScope(userField, passwordField) {
