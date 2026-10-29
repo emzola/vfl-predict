@@ -38,6 +38,7 @@ type Settings struct {
 	BaseStake    float64   `json:"base_stake"`
 	ProfitTarget float64   `json:"profit_target"`
 	MinimumOdds  float64   `json:"minimum_odds"`
+	StakeResetAt time.Time `json:"-"`
 	UpdatedAt    time.Time `json:"updated_at"`
 }
 
@@ -256,6 +257,10 @@ func (s *Service) UpdateSettings(ctx context.Context, accountID string, enabled 
 UPDATE auto_betting_settings
 SET enabled = $2,
     base_stake = $3,
+    stake_reset_at = CASE
+        WHEN $2 = true AND enabled = false THEN $5
+        ELSE stake_reset_at
+    END,
     updated_by = NULLIF($4, ''),
     updated_at = $5
 WHERE setting_key = $1`, primaryKey, enabled, baseStake, accountID, s.now())
@@ -768,12 +773,14 @@ LIMIT 1`).Scan(&seasonID)
 func (s *Service) loadSettings(ctx context.Context) (Settings, error) {
 	var settings Settings
 	err := s.DB.QueryRowContext(ctx, `
-SELECT enabled, base_stake::double precision, profit_target::double precision, minimum_odds::double precision, updated_at
+SELECT enabled, base_stake::double precision, profit_target::double precision, minimum_odds::double precision,
+       stake_reset_at, updated_at
 FROM auto_betting_settings
-WHERE setting_key = $1`, primaryKey).Scan(&settings.Enabled, &settings.BaseStake, &settings.ProfitTarget, &settings.MinimumOdds, &settings.UpdatedAt)
+WHERE setting_key = $1`, primaryKey).Scan(&settings.Enabled, &settings.BaseStake, &settings.ProfitTarget, &settings.MinimumOdds, &settings.StakeResetAt, &settings.UpdatedAt)
 	if err != nil {
 		return Settings{}, err
 	}
+	settings.StakeResetAt = settings.StakeResetAt.UTC()
 	settings.UpdatedAt = settings.UpdatedAt.UTC()
 	return settings, nil
 }
@@ -845,9 +852,10 @@ WHERE season_id = $1`, seasonID).Scan(&summary.TotalStaked, &summary.TotalReturn
 SELECT status, stake_amount::double precision
 FROM auto_betting_rounds
 WHERE season_id = $1
+  AND created_at >= $2
   AND status IN ('won', 'lost', 'void')
 ORDER BY round_no DESC, updated_at DESC
-LIMIT 1`, seasonID).Scan(&latestStatus, &latestStake)
+LIMIT 1`, seasonID, settings.StakeResetAt).Scan(&latestStatus, &latestStake)
 	if err != nil && !errors.Is(err, sql.ErrNoRows) {
 		return SeasonSummary{}, err
 	}
@@ -855,18 +863,14 @@ LIMIT 1`, seasonID).Scan(&latestStatus, &latestStake)
 	err = s.DB.QueryRowContext(ctx, `
 SELECT COALESCE(max(stake_amount), 0)::double precision
 FROM auto_betting_rounds
-WHERE season_id = $1 AND status = 'placed'`, seasonID).Scan(&pendingStake)
+WHERE season_id = $1
+  AND created_at >= $2
+  AND status = 'placed'`, seasonID, settings.StakeResetAt).Scan(&pendingStake)
 	if err != nil {
 		return SeasonSummary{}, err
 	}
 	summary.ActivePendingStake = pendingStake
-	if summary.PendingSettlements > 0 && pendingStake > 0 {
-		summary.NextStake = pendingStake
-	} else if latestStatus == "lost" && latestStake > 0 {
-		summary.NextStake = roundMoney(latestStake * 2)
-	} else {
-		summary.NextStake = roundMoney(settings.BaseStake)
-	}
+	summary.NextStake = determineNextStake(settings.BaseStake, summary.PendingSettlements, pendingStake, latestStatus, latestStake)
 	summary.ProfitTargetReached = summary.TotalProfit >= settings.ProfitTarget
 	if summary.ProfitTargetReached {
 		summary.Paused = true
@@ -938,6 +942,16 @@ func validRuntimeState(value string) bool {
 
 func roundMoney(value float64) float64 {
 	return float64(int(value*100+0.5)) / 100
+}
+
+func determineNextStake(baseStake float64, pendingSettlements int, pendingStake float64, latestStatus string, latestStake float64) float64 {
+	if pendingSettlements > 0 && pendingStake > 0 {
+		return roundMoney(pendingStake)
+	}
+	if latestStatus == "lost" && latestStake > 0 {
+		return roundMoney(latestStake * 2)
+	}
+	return roundMoney(baseStake)
 }
 
 func derefFloat(value *float64) float64 {
