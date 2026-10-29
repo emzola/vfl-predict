@@ -168,6 +168,16 @@ const browserState = {
 };
 
 let unconfirmedBet = null;
+// Last placement/login failure. It stays on the dashboard until a round is
+// actually placed or skipped, so a failure is not wiped by the next idle poll.
+let lastFailure = "";
+
+function describeFailure(error, task) {
+  const round = task?.candidate
+    ? ` [season ${task.candidate.season_id} round ${task.candidate.round}: ${task.candidate.home_team} - ${task.candidate.away_team}]`
+    : "";
+  return `${new Date().toISOString()}${round} ${normalizeError(error)}`;
+}
 
 class UnconfirmedBetError extends Error {
   constructor(message, candidate, currentUrl) {
@@ -183,8 +193,9 @@ class UnconfirmedBetError extends Error {
 async function main() {
   await reportRuntime({ state: "idle", worker_id: workerId, last_error: "" });
   while (true) {
+    let task = null;
     try {
-      const task = await apiRequest("/internal/v1/auto-betting/task");
+      task = await apiRequest("/internal/v1/auto-betting/task");
       if (unconfirmedBet) {
         await reportRuntime({
           state: "error",
@@ -208,6 +219,8 @@ async function main() {
           message: normalizeError(error),
         };
       }
+      lastFailure = describeFailure(error, task);
+      console.error(`[autobet] ${lastFailure}`);
       await closeBrowser().catch(() => undefined);
       await reportRuntime({
         state: "error",
@@ -220,7 +233,7 @@ async function main() {
               current_url: unconfirmedBet.currentURL,
             }
           : {}),
-        last_error: unconfirmedBet?.message || normalizeError(error),
+        last_error: unconfirmedBet?.message || lastFailure,
       });
     }
     await sleep(intervalMs);
@@ -233,7 +246,7 @@ async function handleTask(task) {
     current_season_id: task?.current_season_id || "",
     current_round: task?.candidate?.round || 0,
     current_match_id: task?.candidate?.match_id || 0,
-    last_error: "",
+    last_error: lastFailure,
   };
   if (!task || task.status !== "ready" || !task.candidate) {
     await reportRuntime({ ...runtime, state: task?.status || "idle" });
@@ -263,8 +276,10 @@ async function handleTask(task) {
         observed_odds: typeof result.observedOdds === "number" ? result.observedOdds : undefined,
       }),
     });
+    lastFailure = "";
     await reportRuntime({
       ...runtime,
+      last_error: "",
       state: "idle",
       current_url: safeUrl(page),
       last_heartbeat_at: new Date().toISOString(),
@@ -279,8 +294,10 @@ async function handleTask(task) {
       bet_reference: result.betReference || "",
     }),
   });
+  lastFailure = "";
   await reportRuntime({
     ...runtime,
+    last_error: "",
     state: "awaiting_settlement",
     current_url: safeUrl(page),
     last_heartbeat_at: new Date().toISOString(),
@@ -399,6 +416,7 @@ async function login(page, credentials) {
     state: "ready",
     worker_id: workerId,
     current_url: safeUrl(page),
+    last_error: lastFailure,
     last_login_at: new Date().toISOString(),
     last_heartbeat_at: new Date().toISOString(),
   });
