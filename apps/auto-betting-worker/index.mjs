@@ -448,6 +448,18 @@ async function ensureBrowser() {
     throw new Error(`Chromium headed launch failed for user data directory ${userDataDir} with DISPLAY=${display}. ${message}`);
   }
 
+  if (!/^false$/i.test(process.env.BET9JA_VIRTUAL_NEW_HEADER || "true")) {
+    // Same flag the site sets itself after a "?s=new" visit; covers reloads too.
+    await browserState.context.addInitScript(() => {
+      try {
+        if (location.hostname === "virtual.bet9ja.com" && !sessionStorage.getItem("s")) {
+          sessionStorage.setItem("s", "new");
+        }
+      } catch {
+        // storage unavailable: the ?s=new URL still applies
+      }
+    });
+  }
   browserState.context.setDefaultTimeout(actionTimeoutMs);
   browserState.context.setDefaultNavigationTimeout(navigationTimeoutMs);
   browserState.page = browserState.context.pages()[0] || await browserState.context.newPage();
@@ -952,7 +964,11 @@ function bindPageLifecycle(page) {
   page.on("console", (message) => {
     if (message.type() === "error") notePageProblem(`console ${message.text()}`);
   });
-  page.on("pageerror", (error) => notePageProblem(`pageerror ${normalizeError(error)}`));
+  page.on("pageerror", (error) => {
+    // Include where it was thrown so we can tell which Bet9ja script failed.
+    const where = String(error?.stack || "").split("\n").find((line) => /https?:\/\//.test(line)) || "";
+    notePageProblem(`pageerror ${normalizeError(error).slice(0, 120)} ${where.trim()}`);
+  });
   page.on("close", () => {
     if (browserState.page === page) {
       browserState.page = null;
@@ -977,8 +993,19 @@ async function isOnVirtualPage(page) {
   return waitForRenderedContent(page, 2000);
 }
 
+// Bet9ja's virtual page only renders its current header when the visit is marked as
+// coming from the main site ("?s=new", which it then keeps in sessionStorage "s").
+// Every Bet9ja menu link carries it; a cold visit without it boots the legacy header
+// and crashes (React #200, blank page). Arrive the way a normal visit does.
+function virtualHomeUrl() {
+  if (/^false$/i.test(process.env.BET9JA_VIRTUAL_NEW_HEADER || "true")) return virtualUrl;
+  const url = new URL(virtualUrl);
+  if (!url.searchParams.has("s")) url.searchParams.set("s", "new");
+  return url.toString();
+}
+
 async function openVirtualHome(page) {
-  await page.goto(virtualUrl, { waitUntil: "domcontentloaded", timeout: navigationTimeoutMs });
+  await page.goto(virtualHomeUrl(), { waitUntil: "domcontentloaded", timeout: navigationTimeoutMs });
   await waitForPageReady(page);
 }
 
