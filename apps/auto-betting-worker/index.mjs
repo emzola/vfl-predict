@@ -30,6 +30,13 @@ const selectorPollMs = numberEnv("AUTOBET_SELECTOR_POLL_MS", 400, 100);
 const typingDelayMs = numberEnv("AUTOBET_TYPING_DELAY_MS", 75, 0);
 const browserRecycleMs = numberEnv("AUTOBET_BROWSER_RECYCLE_MINUTES", 180, 10) * 60 * 1000;
 const maxPrepareAttempts = numberEnv("AUTOBET_MAX_PREPARE_ATTEMPTS", 2, 1);
+const sessionCheckMs = numberEnv("AUTOBET_SESSION_CHECK_SECONDS", 60, 15) * 1000;
+const maxConsecutiveFailures = numberEnv("AUTOBET_MAX_FAILURES_BEFORE_RESTART", 3, 1);
+const heartbeatMs = numberEnv("AUTOBET_HEARTBEAT_SECONDS", 15, 5) * 1000;
+const browserLocale = process.env.AUTOBET_LOCALE || "en-US";
+// Optional, e.g. Africa/Lagos. Leave unset unless the worker's IP is in that zone,
+// otherwise the timezone itself becomes a mismatch.
+const browserTimezone = process.env.AUTOBET_TIMEZONE || "";
 
 const config = {
   loginTriggerSelectors: selectorList("BET9JA_LOGIN_TRIGGER_SELECTORS", [
@@ -168,6 +175,8 @@ const browserState = {
 };
 
 let unconfirmedBet = null;
+let lastRuntime = {};
+const session = { prepared: false, lastCheckedAt: 0, failures: 0 };
 // Last placement/login failure. It stays on the dashboard until a round is
 // actually placed or skipped, so a failure is not wiped by the next idle poll.
 let lastFailure = "";
@@ -192,6 +201,9 @@ class UnconfirmedBetError extends Error {
 
 async function main() {
   await reportRuntime({ state: "idle", worker_id: workerId, last_error: "" });
+  // Background heartbeat so long browser steps (launch, login, page load) never
+  // leave the dashboard showing a stale state.
+  setInterval(() => void reportRuntime({ ...lastRuntime }), heartbeatMs).unref?.();
   while (true) {
     let task = null;
     try {
@@ -221,7 +233,14 @@ async function main() {
       }
       lastFailure = describeFailure(error, task);
       console.error(`[autobet] ${lastFailure}`);
-      await closeBrowser().catch(() => undefined);
+      // Keep the browser open across failures; the next loop re-verifies the page and
+      // re-navigates. Only restart Chromium when it is dead or keeps failing.
+      session.prepared = false;
+      session.failures += 1;
+      if (!browserAlive() || session.failures >= maxConsecutiveFailures) {
+        await closeBrowser().catch(() => undefined);
+        session.failures = 0;
+      }
       await reportRuntime({
         state: "error",
         worker_id: workerId,
@@ -248,7 +267,12 @@ async function handleTask(task) {
     current_match_id: task?.candidate?.match_id || 0,
     last_error: lastFailure,
   };
-  if (!task || task.status !== "ready" || !task.candidate) {
+  if (!task || task.status === "disabled") {
+    // Auto betting switched off: release the browser.
+    if (browserState.context) {
+      await closeBrowser().catch(() => undefined);
+    }
+    session.prepared = false;
     await reportRuntime({ ...runtime, state: task?.status || "idle" });
     return;
   }
@@ -259,7 +283,15 @@ async function handleTask(task) {
     return;
   }
 
-  const page = await ensureReadyPage(task.candidate, credentials);
+  const isReady = task.status === "ready" && Boolean(task.candidate);
+  // Auto betting is on: open the browser, log in and select Euro League once, then
+  // keep reusing that page for every bet.
+  const page = await keepSessionWarm(credentials, isReady ? task.candidate : null);
+  if (!isReady) {
+    await reportRuntime({ ...runtime, state: task.status || "idle", current_url: safeUrl(page) });
+    return;
+  }
+
   await reportRuntime({
     ...runtime,
     state: "placing",
@@ -277,6 +309,7 @@ async function handleTask(task) {
       }),
     });
     lastFailure = "";
+    session.failures = 0;
     await reportRuntime({
       ...runtime,
       last_error: "",
@@ -295,6 +328,7 @@ async function handleTask(task) {
     }),
   });
   lastFailure = "";
+  session.failures = 0;
   await reportRuntime({
     ...runtime,
     last_error: "",
@@ -302,6 +336,47 @@ async function handleTask(task) {
     current_url: safeUrl(page),
     last_heartbeat_at: new Date().toISOString(),
   });
+}
+
+function browserAlive() {
+  return Boolean(browserState.context && browserState.page && !browserState.page.isClosed());
+}
+
+// Cheap check that the already-open page can still be used: still on the virtual
+// site, still logged in, and the betting frame is loaded.
+async function isSessionStillUsable(page) {
+  let host = "";
+  try {
+    host = new URL(safeUrl(page)).host;
+  } catch {
+    return false;
+  }
+  if (host !== new URL(virtualUrl).host) return false;
+  if (!(await hasActiveSession(page))) return false;
+  return Boolean(await bettingFrame(page));
+}
+
+async function keepSessionWarm(credentials, candidate) {
+  // Recycle a long-lived browser only between bets, never right before one.
+  if (!candidate && browserAlive() && shouldRecycleBrowser()) {
+    await closeBrowser();
+    session.prepared = false;
+  }
+  if (browserAlive() && session.prepared) {
+    const page = browserState.page;
+    if (!candidate && Date.now() - session.lastCheckedAt < sessionCheckMs) {
+      return page;
+    }
+    if (await isSessionStillUsable(page)) {
+      session.lastCheckedAt = Date.now();
+      if (candidate) await ensureTournament(page, candidate);
+      return page;
+    }
+  }
+  const page = await ensureReadyPage(candidate, credentials);
+  session.prepared = true;
+  session.lastCheckedAt = Date.now();
+  return page;
 }
 
 async function ensureReadyPage(candidate, credentials) {
@@ -329,7 +404,7 @@ async function ensureReadyPage(candidate, credentials) {
 }
 
 async function ensureBrowser() {
-  if (browserState.context && browserState.page && !browserState.page.isClosed() && !shouldRecycleBrowser()) {
+  if (browserAlive()) {
     return browserState.page;
   }
   await closeBrowser();
@@ -346,7 +421,11 @@ async function ensureBrowser() {
         "--disable-gpu"
       ],
       deviceScaleFactor: 1,
-      userAgent: "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36"
+      // No userAgent override: a hard-coded "Windows / Chrome 126" string contradicted
+      // the real Linux Chromium (navigator.platform, client hints, JS features), which is
+      // exactly what bot checks look for. Let Chromium report its own identity.
+      locale: browserLocale,
+      ...(browserTimezone ? { timezoneId: browserTimezone } : {}),
     });
   } catch (error) {
     const display = process.env.DISPLAY || "unset";
@@ -570,6 +649,11 @@ async function fetchStoredCredentials() {
 }
 
 async function ensureTournament(page, candidate) {
+  // On a reused page Euro League is usually already showing; don't click the tab
+  // again (that reloads the game frame) if the candidate's match is visible.
+  if (candidate?.home_team && await waitForTeamText(page, candidate.home_team, 1500)) {
+    return;
+  }
   for (let attempt = 0; attempt < 2; attempt += 1) {
     await maybeDismissOverlays(page);
     const selector = await firstExisting(page, config.tournamentSelectors);
@@ -636,6 +720,8 @@ async function readBetReference(page, timeoutMs = 0) {
 
 
 async function reportRuntime(payload) {
+  const { last_heartbeat_at: _ignored, ...rest } = payload || {};
+  lastRuntime = rest;
   try {
     await apiRequest("/internal/v1/auto-betting/runtime", {
       method: "POST",
@@ -832,7 +918,25 @@ function bindContextLifecycle(context) {
   });
 }
 
+// Recent network/console problems, attached to page-render diagnostics so a blank
+// page says *why* it is blank (blocked script, 403 from a WAF, geo block, JS error).
+const pageProblems = [];
+function notePageProblem(text) {
+  pageProblems.push(`${new Date().toISOString().slice(11, 19)} ${String(text).slice(0, 220)}`);
+  if (pageProblems.length > 25) pageProblems.shift();
+}
+
 function bindPageLifecycle(page) {
+  page.on("requestfailed", (request) => {
+    notePageProblem(`requestfailed ${request.failure()?.errorText || ""} ${request.url()}`);
+  });
+  page.on("response", (response) => {
+    if (response.status() >= 400) notePageProblem(`http ${response.status()} ${response.url()}`);
+  });
+  page.on("console", (message) => {
+    if (message.type() === "error") notePageProblem(`console ${message.text()}`);
+  });
+  page.on("pageerror", (error) => notePageProblem(`pageerror ${normalizeError(error)}`));
   page.on("close", () => {
     if (browserState.page === page) {
       browserState.page = null;
@@ -880,7 +984,7 @@ async function waitForRenderedContent(page, timeoutMs) {
     for (const root of searchRoots(page)) {
       const body = root.locator("body").first();
       if (!(await isVisible(body))) continue;
-      const text = (await body.innerText().catch(() => "")).replace(/\\s+/g, " ").trim();
+      const text = (await body.innerText().catch(() => "")).replace(/\s+/g, " ").trim();
       if (text.length >= 40) {
         return true;
       }
@@ -905,6 +1009,8 @@ async function formatPageRenderDiagnostics(page) {
     `frames=${JSON.stringify(frameUrls(page))}`,
     `body_html_lengths=${JSON.stringify(htmlLengths)}`,
     `body=${JSON.stringify(bodyText)}`,
+    `user_agent=${JSON.stringify(await page.evaluate(() => navigator.userAgent).catch(() => ""))}`,
+    `page_problems=${JSON.stringify(pageProblems.slice(-15))}`,
   ].join(" ");
 }
 
@@ -1000,7 +1106,6 @@ const OVER_15 = 'a.sr-oddsButton[data-name$="/18/12?total=1.5"]';
 // The countdown is span.countdown_amount. A generic mm:ss text selector also matches the video player's
 // span.fp-elapsed / span.fp-remaining and can return the wrong time.
 const TIMER = ".countdown_amount";
-const minSecondsLeft = numberEnv("AUTOBET_MIN_SECONDS_LEFT", 20, 0);
 const verifyRound = /^true$/i.test(process.env.BET9JA_VERIFY_ROUND || "false");
 
 // ---------- odds parsing ----------
@@ -1122,6 +1227,17 @@ async function findBetslipScope(page) {
     const panel = root.locator("form.sr-bs-container").first();
     if (await isVisible(panel)) return panel;
   }
+  // Fallback (live check 2026-10-29): a filled slip always shows "Ticket stake" and
+  // "Place bet NGN ..." in one panel. The last match in document order is the
+  // innermost such element, i.e. the slip itself rather than a page wrapper.
+  for (const root of page.frames()) {
+    const panel = root
+      .locator("form, div, section")
+      .filter({ hasText: /ticket\s*stake/i })
+      .filter({ hasText: /place\s*bet/i })
+      .last();
+    if (await isVisible(panel)) return panel;
+  }
   return null;
 }
 
@@ -1178,7 +1294,8 @@ async function waitForBetslipSelection(page, candidate) {
     const betslip = await findBetslipScope(page);
     if (betslip) {
       lastText = String((await betslip.innerText().catch(() => "")) || "").replace(/\s+/g, " ");
-      const count = (lastText.match(/betslip\s*\(\s*(\d+)\s*\)/i) || [])[1];
+      // The "Betslip (n)" tab header may sit outside the slip panel, so fall back to the page-wide header.
+      const count = (lastText.match(/betslip\s*\(\s*(\d+)\s*\)/i) || [])[1] || String(await betslipCount(page));
       const isPlainTotalOver15 = /total goals\s*over\s*1[.,]5/i.test(lastText) && !/(home|away)\s+total goals/i.test(lastText);
       if (count === "1" && teams.test(lastText) && !isPlainTotalOver15 && /over\s*1[.,]5/i.test(lastText)) {
         // Wrong market in the slip (e.g. Home Total Goals over 1.5). Never stake it.
@@ -1205,11 +1322,8 @@ async function waitForBetslipSelection(page, candidate) {
 async function placeCandidate(page, candidate) {
   await clearBetslip(page);
 
-  const secondsLeft = await readSecondsLeft(page);
-  if (secondsLeft !== null && secondsLeft < minSecondsLeft) {
-    return { action: "skip", reason: `Only ${secondsLeft}s left in the betting window.` };
-  }
-
+  // No seconds-left cutoff: the worker always attempts a valid candidate while the
+  // round is still open for betting.
   const located = await locateOverMarket(page, candidate);
   if (located.skipReason) {
     return { action: "skip", reason: located.skipReason };
@@ -1282,6 +1396,11 @@ async function placeCandidate(page, candidate) {
   }
 
   const betReference = await readBetReference(page, confirmationTimeoutMs);
+  // The browser is reused for the next bet, so dismiss the success panel if it offers to.
+  const another = await firstExisting(page, ['text=/^\\s*place\\s+another\\s+bet\\s*$/i']);
+  if (another) {
+    await clickLocator(another).catch(() => undefined);
+  }
   return {
     action: "placed",
     quotedOdds: effectiveOdds || minimumOdds,
