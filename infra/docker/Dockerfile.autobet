@@ -7,4 +7,4 @@ RUN npm ci --omit=dev
 COPY apps/auto-betting-worker/index.mjs /app/index.mjs
 
 ENV NODE_ENV=production
-CMD ["npm", "start"]
+CMD ["npm", "run", "start:xvfb"]
