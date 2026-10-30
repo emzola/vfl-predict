@@ -33,8 +33,9 @@ func (s *Server) autoBettingAPI(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		var input struct {
-			Enabled   bool    `json:"enabled"`
-			BaseStake float64 `json:"base_stake"`
+			Enabled      bool    `json:"enabled"`
+			BaseStake    float64 `json:"base_stake"`
+			ProfitTarget float64 `json:"profit_target"`
 		}
 		if err := json.NewDecoder(r.Body).Decode(&input); err != nil {
 			writeError(w, http.StatusBadRequest, "invalid auto betting settings")
@@ -44,7 +45,11 @@ func (s *Server) autoBettingAPI(w http.ResponseWriter, r *http.Request) {
 			writeError(w, http.StatusBadRequest, "base stake must be positive")
 			return
 		}
-		if err := service.UpdateSettings(r.Context(), session.AccountID, input.Enabled, input.BaseStake); err != nil {
+		if input.ProfitTarget <= 0 {
+			writeError(w, http.StatusBadRequest, "profit target must be positive")
+			return
+		}
+		if err := service.UpdateSettings(r.Context(), session.AccountID, input.Enabled, input.BaseStake, input.ProfitTarget); err != nil {
 			writeServerError(w, "could not update auto betting settings")
 			return
 		}

@@ -249,7 +249,9 @@ run only after the operator supplies infrastructure values.
 - No VPS hostname/IP, SSH key, or verified SSH host key was supplied, so no production connection was attempted.
 - No GitHub repository owner/name was invented; GHCR names are derived by the workflow or supplied in the VPS environment.
 - No authorized login email, Resend API key, sender, Cloudflare API token, or DNS verification value is present.
-- Cloudflare DNS, Full (strict) origin TLS, Resend delivery, GHCR pull access, and real browser login remain production gates.
+- Cloudflare DNS, Full (strict) origin TLS, Resend delivery, GHCR pull access,
+  Bet9ja API credentials, and an authorized provider-backed smoke test remain
+  production gates.
 - The standard Caddy image has no assumed DNS-01 plugin; HTTP-01 is the default path, and a deliberate plugin image is required if the final Cloudflare setup needs DNS-01.
 - A live provider request was not made by Phase 5; provider endpoint values remain an operator-controlled configuration and the existing ten-second minimum request spacing is preserved.
 - Browser E2E is a deterministic local gate; it does not prove real Resend delivery or a genuine forward prediction round.

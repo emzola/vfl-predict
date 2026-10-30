@@ -7,7 +7,8 @@ info:
     PostgreSQL records. Provider responses, retrospective odds, and genuine
     forward observations retain separate provenance. Phase 6 prediction
     payloads may include unified scoreline markets and dynamic team-state
-    diagnostics. No endpoint places bets.
+    diagnostics. Provider ticket placement is restricted to the private
+    auto-betting worker; the public API only controls its settings and ledger.
   x-contract-status: implemented-application-boundary-provider-semantics-unchanged
 paths:
   /api/v1/auth/request-link:

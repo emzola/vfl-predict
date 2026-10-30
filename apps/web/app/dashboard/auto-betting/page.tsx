@@ -14,6 +14,7 @@ export default function AutoBettingPage() {
   const [data, setData] = useState<AutoBettingState>();
   const [enabled, setEnabled] = useState(false);
   const [baseStake, setBaseStake] = useState(0);
+  const [profitTarget, setProfitTarget] = useState(0);
   const [bet9jaUsername, setBet9jaUsername] = useState("");
   const [bet9jaPassword, setBet9jaPassword] = useState("");
   const [error, setError] = useState("");
@@ -29,6 +30,7 @@ export default function AutoBettingPage() {
       setData(value);
       setEnabled(value.settings.enabled);
       setBaseStake(value.settings.base_stake);
+      setProfitTarget(value.settings.profit_target);
       setError("");
     } catch (value) {
       setError(errorMessage(value));
@@ -50,7 +52,7 @@ export default function AutoBettingPage() {
       await apiFetch("/api/v1/auto-betting", {
         method: "PATCH",
         headers: { "X-CSRF-Token": csrfToken() },
-        body: JSON.stringify({ enabled, base_stake: Number(baseStake) }),
+        body: JSON.stringify({ enabled, base_stake: Number(baseStake), profit_target: Number(profitTarget) }),
       });
       setSaved("Auto betting settings saved.");
       await load();
@@ -117,15 +119,28 @@ export default function AutoBettingPage() {
             </label>
 
             <label className="block text-sm text-slate-300">
-              Starting stake amount
+              Starting stake amount (₦)
               <input
                 type="number"
                 min={1}
-                step="100"
+                step="1"
                 value={baseStake}
                 onChange={(event) => setBaseStake(Number(event.target.value))}
                 className="mt-2 w-full rounded-lg border border-slate-700 bg-slate-950/40 px-3 py-2 text-white"
               />
+            </label>
+
+            <label className="block text-sm text-slate-300">
+              Season profit target (₦)
+              <input
+                type="number"
+                min={1}
+                step="1"
+                value={profitTarget}
+                onChange={(event) => setProfitTarget(Number(event.target.value))}
+                className="mt-2 w-full rounded-lg border border-slate-700 bg-slate-950/40 px-3 py-2 text-white"
+              />
+              <span className="mt-1 block text-xs text-slate-500">Betting pauses for the current season when this net profit is reached and resumes with the next season.</span>
             </label>
 
             <div className="grid gap-3 sm:grid-cols-2">
@@ -167,7 +182,7 @@ export default function AutoBettingPage() {
                 <p className="mt-1 font-semibold text-white">{data.settings.credentials_configured ? "Configured" : "Missing"}</p>
               </div>
             </div>
-            <p className="mt-3 text-sm leading-6 text-slate-400">Credentials are encrypted on the server and are only exposed to the internal Playwright worker. The password never comes back to this page after save.</p>
+            <p className="mt-3 text-sm leading-6 text-slate-400">Credentials are encrypted on the server and are only exposed to the internal API betting worker. The password never comes back to this page after save.</p>
             <div className="mt-5 space-y-4">
               <label className="block text-sm text-slate-300">
                 Bet9ja username

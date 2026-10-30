@@ -1,10 +1,12 @@
-FROM mcr.microsoft.com/playwright:v1.55.1-noble
+FROM node:22-alpine
 
 WORKDIR /app
 COPY apps/auto-betting-worker/package.json /app/package.json
 COPY apps/auto-betting-worker/package-lock.json /app/package-lock.json
-RUN npm ci --omit=dev
+RUN npm ci --omit=dev --no-audit --no-fund
 COPY apps/auto-betting-worker/index.mjs /app/index.mjs
+COPY apps/auto-betting-worker/bet9ja-api.mjs /app/bet9ja-api.mjs
 
 ENV NODE_ENV=production
-CMD ["npm", "run", "start:xvfb"]
+USER node
+CMD ["npm", "run", "start"]

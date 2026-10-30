@@ -12,7 +12,9 @@ Phase 3 provides independent worker commands:
   metrics.
 
 All commands use PostgreSQL migrations and stop cleanly on SIGINT/SIGTERM.
-No worker places bets or exposes a public API.
+These Go workers do not expose a public API. The separate Node auto-betting
+worker is the only process that can place provider tickets, and it communicates
+with the authenticated Go API over the private network.
 
 ## Production prediction lifecycle
 

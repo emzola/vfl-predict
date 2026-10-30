@@ -136,6 +136,31 @@ type WorkerTask struct {
 	Runtime       Runtime        `json:"runtime"`
 	SeasonSummary *SeasonSummary `json:"season_summary,omitempty"`
 	Candidate     *Candidate     `json:"candidate,omitempty"`
+	Selection     *BetSelection  `json:"selection,omitempty"`
+}
+
+// BetSelection contains the latest executable provider quote for the fixed
+// Over 1.5 market. It is returned only on the internal worker task response;
+// dashboard responses use DashboardState and therefore never expose it.
+type BetSelection struct {
+	MatchID              int64     `json:"match_id"`
+	HomeTeamUID          int64     `json:"home_team_uid"`
+	HomeTeamProviderID   string    `json:"home_team_provider_id"`
+	HomeTeamAbbreviation string    `json:"home_team_abbreviation"`
+	AwayTeamUID          int64     `json:"away_team_uid"`
+	AwayTeamProviderID   string    `json:"away_team_provider_id"`
+	AwayTeamAbbreviation string    `json:"away_team_abbreviation"`
+	MarketID             int64     `json:"market_id"`
+	MarketName           string    `json:"market_name"`
+	Specifiers           string    `json:"specifiers"`
+	OutcomeID            string    `json:"outcome_id"`
+	OutcomeName          string    `json:"outcome_name"`
+	RawOdds              string    `json:"raw_odds"`
+	DecimalOdds          float64   `json:"decimal_odds"`
+	MarketStatus         int       `json:"market_status"`
+	OutcomeActive        int       `json:"outcome_active"`
+	SourceTimestampAt    time.Time `json:"source_timestamp_at"`
+	ObservedAt           time.Time `json:"observed_at"`
 }
 
 type RuntimeUpdate struct {
@@ -277,7 +302,7 @@ func (s *Service) LoadDashboard(ctx context.Context) (DashboardState, error) {
 	return state, nil
 }
 
-func (s *Service) UpdateSettings(ctx context.Context, accountID string, enabled bool, baseStake float64) error {
+func (s *Service) UpdateSettings(ctx context.Context, accountID string, enabled bool, baseStake, profitTarget float64) error {
 	if err := s.ensureRows(ctx); err != nil {
 		return err
 	}
@@ -287,17 +312,21 @@ func (s *Service) UpdateSettings(ctx context.Context, accountID string, enabled 
 	if baseStake <= 0 {
 		return errors.New("base stake must be positive")
 	}
+	if profitTarget <= 0 {
+		return errors.New("profit target must be positive")
+	}
 	_, err := s.DB.ExecContext(ctx, `
 UPDATE auto_betting_settings
 SET enabled = $2,
     base_stake = $3,
+    profit_target = $4,
     stake_reset_at = CASE
-        WHEN $2 = true AND enabled = false THEN $5
+        WHEN $2 = true AND enabled = false THEN $6
         ELSE stake_reset_at
     END,
-    updated_by = NULLIF($4, ''),
-    updated_at = $5
-WHERE setting_key = $1`, primaryKey, enabled, baseStake, accountID, s.now())
+    updated_by = NULLIF($5, ''),
+    updated_at = $6
+WHERE setting_key = $1`, primaryKey, enabled, baseStake, profitTarget, accountID, s.now())
 	return err
 }
 
@@ -415,8 +444,59 @@ func (s *Service) NextTask(ctx context.Context) (*WorkerTask, error) {
 		return task, nil
 	}
 	task.Candidate = candidate
+	selection, err := s.loadBetSelection(ctx, candidate.MatchID)
+	if err != nil {
+		return nil, err
+	}
+	task.Selection = selection
 	task.Status = "ready"
 	return task, nil
+}
+
+func (s *Service) loadBetSelection(ctx context.Context, matchID int64) (*BetSelection, error) {
+	if matchID <= 0 {
+		return nil, errors.New("invalid betting match id")
+	}
+	var selection BetSelection
+	err := s.DB.QueryRowContext(ctx, `
+SELECT f.match_id,
+       f.home_team_uid, CONCAT('sr:competitor:', f.home_team_uid), COALESCE(ht.abbreviation, ''),
+       f.away_team_uid, CONCAT('sr:competitor:', f.away_team_uid), COALESCE(at.abbreviation, ''),
+       o.provider_market_id, md.market_name, o.specifiers, o.outcome_id,
+       o.outcome_name, o.raw_odds, o.decimal_odds::double precision,
+       o.market_status, o.outcome_active, o.source_timestamp_at, o.last_observed_at
+FROM fixtures f
+JOIN teams ht ON ht.team_uid = f.home_team_uid
+JOIN teams at ON at.team_uid = f.away_team_uid
+JOIN odds_snapshots o ON o.match_id = f.match_id
+JOIN market_definitions md ON md.market_definition_id = o.market_definition_id
+WHERE f.match_id = $1
+  AND o.provider_market_id = 18
+  AND o.specifiers = 'total=1.5'
+  AND o.outcome_id = '12'
+  AND o.odds_valid = true
+  AND o.decimal_odds IS NOT NULL
+  AND o.market_status = 1
+  AND o.outcome_active = 1
+  AND o.observation_kind = 'live_observation'
+ORDER BY o.last_observed_at DESC, o.source_timestamp_at DESC, o.odds_snapshot_id DESC
+LIMIT 1`, matchID).Scan(
+		&selection.MatchID,
+		&selection.HomeTeamUID, &selection.HomeTeamProviderID, &selection.HomeTeamAbbreviation,
+		&selection.AwayTeamUID, &selection.AwayTeamProviderID, &selection.AwayTeamAbbreviation,
+		&selection.MarketID, &selection.MarketName, &selection.Specifiers, &selection.OutcomeID,
+		&selection.OutcomeName, &selection.RawOdds, &selection.DecimalOdds,
+		&selection.MarketStatus, &selection.OutcomeActive, &selection.SourceTimestampAt, &selection.ObservedAt,
+	)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, fmt.Errorf("load current betting selection: %w", err)
+	}
+	selection.SourceTimestampAt = selection.SourceTimestampAt.UTC()
+	selection.ObservedAt = selection.ObservedAt.UTC()
+	return &selection, nil
 }
 
 func (s *Service) UpdateRuntime(ctx context.Context, update RuntimeUpdate) error {
@@ -449,7 +529,7 @@ SET state = $2,
     current_match_id = NULLIF($6, 0),
     current_url = NULLIF($7, ''),
     last_heartbeat_at = $8,
-    last_login_at = $9,
+    last_login_at = COALESCE($9, auto_betting_runtime.last_login_at),
     last_error = NULLIF($10, ''),
     updated_at = $11
 WHERE runtime_key = $1`, primaryKey, state, truncate(update.WorkerID, 128), update.CurrentSeasonID, update.CurrentRound, update.CurrentMatchID, truncate(update.CurrentURL, 512), heartbeat, nullableTimestamp(loginAt), truncate(update.LastError, 8192), s.now())
