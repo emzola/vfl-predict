@@ -966,7 +966,7 @@ function bindPageLifecycle(page) {
   });
   page.on("pageerror", (error) => {
     // Include where it was thrown so we can tell which Bet9ja script failed.
-    const where = String(error?.stack || "").split("\n").find((line) => /https?:\/\//.test(line)) || "";
+    const where = String(error?.stack || "").split("\n").filter((line) => /^\s*at .*https?:\/\//.test(line)).slice(0, 2).join(" | ");
     notePageProblem(`pageerror ${normalizeError(error).slice(0, 120)} ${where.trim()}`);
   });
   page.on("close", () => {
@@ -1070,6 +1070,18 @@ async function formatPageRenderDiagnostics(page) {
     `body_html_lengths=${JSON.stringify(htmlLengths)}`,
     `body=${JSON.stringify(bodyText)}`,
     `user_agent=${JSON.stringify(await page.evaluate(() => navigator.userAgent).catch(() => ""))}`,
+    `dom=${JSON.stringify(await page.evaluate(() => {
+      const project = document.querySelector(".project");
+      return {
+        project: project ? project.innerHTML.length : "missing",
+        bodyChildren: [...document.body.children].map((el) => el.tagName + (el.id ? "#" + el.id : "") + (typeof el.className === "string" && el.className ? "." + el.className.split(" ")[0] : "")).slice(0, 20),
+        commonUIFiles: (window.commonUIJS && window.commonUIJS.files) || "missing",
+        commonUIContentKeys: window.commonUIContent ? Object.keys(window.commonUIContent) : "missing",
+        bet9jaScripts: [...document.scripts].map((el) => el.src).filter((src) => /bet9ja|akamaized/.test(src)).map((src) => src.replace(/^https:\/\//, "")).slice(0, 12),
+        webdriver: navigator.webdriver,
+        languages: navigator.languages,
+      };
+    }).catch((error) => normalizeError(error)))}`,
     `page_problems=${JSON.stringify(pageProblems.slice(-15))}`,
   ].join(" ");
 }
