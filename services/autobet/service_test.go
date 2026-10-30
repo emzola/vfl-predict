@@ -106,31 +106,58 @@ func TestRoundMoneyRoundsToTwoDecimals(t *testing.T) {
 	}
 }
 
-func TestDetermineNextStake(t *testing.T) {
+func TestQualifiesForOver15(t *testing.T) {
 	tests := []struct {
-		name               string
-		baseStake          float64
-		pendingSettlements int
-		pendingStake       float64
-		latestStatus       string
-		latestStake        float64
-		want               float64
+		name  string
+		value probability
+		want  bool
 	}{
 		{
-			name:               "pending placed bet keeps pending stake",
-			baseStake:          5000,
-			pendingSettlements: 1,
-			pendingStake:       10000,
-			latestStatus:       "lost",
-			latestStake:        5000,
-			want:               10000,
+			name:  "home and draw both exceed away",
+			value: probability{Home: 0.855, Draw: 0.097, Away: 0.048},
+			want:  true,
 		},
 		{
-			name:         "latest loss doubles stake",
-			baseStake:    5000,
-			latestStatus: "lost",
-			latestStake:  5000,
-			want:         10000,
+			name:  "away and draw both exceed home",
+			value: probability{Home: 0.12, Draw: 0.28, Away: 0.60},
+			want:  true,
+		},
+		{
+			name:  "draw does not exceed away",
+			value: probability{Home: 0.39, Draw: 0.264, Away: 0.346},
+			want:  false,
+		},
+		{
+			name:  "ties do not qualify",
+			value: probability{Home: 0.40, Draw: 0.30, Away: 0.40},
+			want:  false,
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := qualifiesForOver15(tc.value); got != tc.want {
+				t.Fatalf("qualifiesForOver15(%+v)=%v want %v", tc.value, got, tc.want)
+			}
+		})
+	}
+}
+
+func TestDetermineNextStake(t *testing.T) {
+	tests := []struct {
+		name      string
+		baseStake float64
+		want      float64
+	}{
+		{
+			name:      "flat stake remains unchanged",
+			baseStake: 5000,
+			want:      5000,
+		},
+		{
+			name:      "decimal stake is rounded",
+			baseStake: 5000.567,
+			want:      5000.57,
 		},
 		{
 			name:      "fresh cycle uses base stake",
@@ -141,7 +168,7 @@ func TestDetermineNextStake(t *testing.T) {
 
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			got := determineNextStake(tc.baseStake, tc.pendingSettlements, tc.pendingStake, tc.latestStatus, tc.latestStake)
+			got := determineNextStake(tc.baseStake)
 			if got != tc.want {
 				t.Fatalf("determineNextStake=%v want %v", got, tc.want)
 			}

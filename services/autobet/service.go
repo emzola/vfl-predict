@@ -13,9 +13,11 @@ import (
 )
 
 const (
-	primaryKey   = "primary"
-	marketKey    = "over_1_5"
-	runtimeState = "disabled"
+	primaryKey        = "primary"
+	marketKey         = "over_1_5"
+	runtimeState      = "disabled"
+	legacyMinimumOdds = 1.00
+	qualificationRule = "home_and_draw_above_away_or_away_and_draw_above_home"
 )
 
 type Service struct {
@@ -39,11 +41,9 @@ type Settings struct {
 	Enabled               bool       `json:"enabled"`
 	BaseStake             float64    `json:"base_stake"`
 	ProfitTarget          float64    `json:"profit_target"`
-	MinimumOdds           float64    `json:"minimum_odds"`
 	CredentialsConfigured bool       `json:"credentials_configured"`
 	MaskedUsername        string     `json:"masked_username,omitempty"`
 	CredentialsUpdatedAt  *time.Time `json:"credentials_updated_at,omitempty"`
-	StakeResetAt          time.Time  `json:"-"`
 	UsernameCiphertext    string     `json:"-"`
 	PasswordCiphertext    string     `json:"-"`
 	UpdatedAt             time.Time  `json:"updated_at"`
@@ -83,11 +83,11 @@ type SeasonSummary struct {
 type RoundRecord struct {
 	SeasonID       string     `json:"season_id"`
 	Round          int        `json:"round"`
+	MatchID        int64      `json:"match_id"`
 	Status         string     `json:"status"`
 	HomeTeam       string     `json:"home_team"`
 	AwayTeam       string     `json:"away_team"`
 	StakeAmount    float64    `json:"stake_amount"`
-	MinimumOdds    float64    `json:"minimum_odds"`
 	QuotedOdds     *float64   `json:"quoted_odds,omitempty"`
 	PotentialRet   *float64   `json:"potential_return,omitempty"`
 	RealizedRet    *float64   `json:"realized_return,omitempty"`
@@ -117,16 +117,23 @@ type Candidate struct {
 	PointInTimeVerified      bool       `json:"point_in_time_verified"`
 	OddsObservedAt           *time.Time `json:"odds_observed_at,omitempty"`
 	StakeAmount              float64    `json:"stake_amount"`
-	MinimumOdds              float64    `json:"minimum_odds"`
+}
+
+type BetTask struct {
+	Candidate *Candidate    `json:"candidate"`
+	Selection *BetSelection `json:"selection,omitempty"`
 }
 
 type DashboardState struct {
-	Settings      Settings       `json:"settings"`
-	Runtime       Runtime        `json:"runtime"`
-	CurrentSeason string         `json:"current_season_id,omitempty"`
-	SeasonSummary *SeasonSummary `json:"season_summary,omitempty"`
-	NextCandidate *Candidate     `json:"next_candidate,omitempty"`
-	RecentRounds  []RoundRecord  `json:"recent_rounds"`
+	Settings       Settings       `json:"settings"`
+	Runtime        Runtime        `json:"runtime"`
+	CurrentSeason  string         `json:"current_season_id,omitempty"`
+	SeasonSummary  *SeasonSummary `json:"season_summary,omitempty"`
+	NextCandidates []Candidate    `json:"next_candidates,omitempty"`
+	// NextCandidate remains populated for older dashboard clients. New clients
+	// should use NextCandidates because a round can contain multiple bets.
+	NextCandidate *Candidate    `json:"next_candidate,omitempty"`
+	RecentRounds  []RoundRecord `json:"recent_rounds"`
 }
 
 type WorkerTask struct {
@@ -135,8 +142,11 @@ type WorkerTask struct {
 	Settings      Settings       `json:"settings"`
 	Runtime       Runtime        `json:"runtime"`
 	SeasonSummary *SeasonSummary `json:"season_summary,omitempty"`
-	Candidate     *Candidate     `json:"candidate,omitempty"`
-	Selection     *BetSelection  `json:"selection,omitempty"`
+	Bets          []BetTask      `json:"bets,omitempty"`
+	// Candidate and Selection expose the first entry for rollout compatibility;
+	// workers should process Bets so every qualifying fixture is handled.
+	Candidate *Candidate    `json:"candidate,omitempty"`
+	Selection *BetSelection `json:"selection,omitempty"`
 }
 
 // BetSelection contains the latest executable provider quote for the fixed
@@ -279,10 +289,11 @@ func (s *Service) LoadDashboard(ctx context.Context) (DashboardState, error) {
 		return DashboardState{}, err
 	}
 	state := DashboardState{
-		Settings:      settings,
-		Runtime:       runtime,
-		CurrentSeason: seasonID,
-		RecentRounds:  make([]RoundRecord, 0),
+		Settings:       settings,
+		Runtime:        runtime,
+		CurrentSeason:  seasonID,
+		NextCandidates: make([]Candidate, 0),
+		RecentRounds:   make([]RoundRecord, 0),
 	}
 	if seasonID != "" {
 		summary, err := s.loadSeasonSummary(ctx, seasonID, settings)
@@ -290,11 +301,14 @@ func (s *Service) LoadDashboard(ctx context.Context) (DashboardState, error) {
 			return DashboardState{}, err
 		}
 		state.SeasonSummary = &summary
-		candidate, err := s.nextCandidate(ctx, seasonID, settings, summary)
+		candidates, err := s.nextCandidates(ctx, seasonID, settings, summary)
 		if err != nil {
 			return DashboardState{}, err
 		}
-		state.NextCandidate = candidate
+		state.NextCandidates = candidates
+		if len(candidates) > 0 {
+			state.NextCandidate = &state.NextCandidates[0]
+		}
 	}
 	state.RecentRounds, err = s.loadRecentRounds(ctx, 24)
 	if err != nil {
@@ -321,10 +335,6 @@ UPDATE auto_betting_settings
 SET enabled = $2,
     base_stake = $3,
     profit_target = $4,
-    stake_reset_at = CASE
-        WHEN $2 = true AND enabled = false THEN $6
-        ELSE stake_reset_at
-    END,
     updated_by = NULLIF($5, ''),
     updated_at = $6
 WHERE setting_key = $1`, primaryKey, enabled, baseStake, profitTarget, accountID, s.now())
@@ -416,6 +426,7 @@ func (s *Service) NextTask(ctx context.Context) (*WorkerTask, error) {
 		CurrentSeason: seasonID,
 		Settings:      settings,
 		Runtime:       runtime,
+		Bets:          make([]BetTask, 0),
 	}
 	if !settings.Enabled {
 		task.Status = "disabled"
@@ -433,23 +444,24 @@ func (s *Service) NextTask(ctx context.Context) (*WorkerTask, error) {
 		task.Status = "paused_profit_target"
 		return task, nil
 	}
-	if summary.PendingSettlements > 0 {
-		task.Status = "awaiting_settlement"
-		return task, nil
-	}
-	candidate, err := s.nextCandidate(ctx, seasonID, settings, summary)
+	candidates, err := s.nextCandidates(ctx, seasonID, settings, summary)
 	if err != nil {
 		return nil, err
 	}
-	if candidate == nil {
+	if len(candidates) == 0 {
 		return task, nil
 	}
-	task.Candidate = candidate
-	selection, err := s.loadBetSelection(ctx, candidate.MatchID)
-	if err != nil {
-		return nil, err
+	for index := range candidates {
+		candidate := candidates[index]
+		selection, selectionErr := s.loadBetSelection(ctx, candidate.MatchID)
+		if selectionErr != nil {
+			return nil, selectionErr
+		}
+		candidateCopy := candidate
+		task.Bets = append(task.Bets, BetTask{Candidate: &candidateCopy, Selection: selection})
 	}
-	task.Selection = selection
+	task.Candidate = task.Bets[0].Candidate
+	task.Selection = task.Bets[0].Selection
 	task.Status = "ready"
 	return task, nil
 }
@@ -540,20 +552,17 @@ WHERE runtime_key = $1`, primaryKey, state, truncate(update.WorkerID, 128), upda
 	return err
 }
 
-func (s *Service) RecordSkip(ctx context.Context, seasonID string, round int, reason string, observedOdds *float64) error {
-	settings, summary, candidate, err := s.validateRoundAction(ctx, seasonID, round)
+func (s *Service) RecordSkip(ctx context.Context, seasonID string, round int, matchID int64, reason string, observedOdds *float64) error {
+	_, _, candidate, err := s.validateCandidateAction(ctx, seasonID, round, matchID)
 	if err != nil {
 		return err
-	}
-	if summary.PendingSettlements > 0 {
-		return errors.New("cannot skip while a placed bet is awaiting settlement")
 	}
 	payload := map[string]any{
 		"decision_basis":         candidate.DecisionBasis,
 		"decision_outcome":       candidate.DecisionOutcome,
 		"decision_probability":   candidate.DecisionProbability,
-		"minimum_odds":           settings.MinimumOdds,
 		"point_in_time_verified": candidate.PointInTimeVerified,
+		"qualification_rule":     qualificationRule,
 	}
 	if candidate.DecisionMarketDifference != nil {
 		payload["decision_market_difference"] = *candidate.DecisionMarketDifference
@@ -568,30 +577,27 @@ INSERT INTO auto_betting_rounds (
     home_team, away_team, decision_rank, market_key, status, stake_amount,
     minimum_odds, quoted_odds, skip_reason, decision_payload, updated_at
 ) VALUES (
-    $1, $2, $3::uuid, $4::uuid, $5, $6, $7, 1, $8, 'skipped', 0,
-    $9, NULLIF($10, 0), $11, $12::jsonb, $13
+    $1, $2, $3::uuid, $4::uuid, $5, $6, $7, $8, $9, 'skipped', 0,
+    $10, NULLIF($11, 0), $12, $13::jsonb, $14
 )`, candidate.SeasonID, candidate.Round, candidate.PredictionRunID, candidate.PredictionRevisionID, candidate.MatchID,
-		candidate.HomeTeam, candidate.AwayTeam, marketKey, settings.MinimumOdds, derefFloat(observedOdds), truncate(strings.TrimSpace(reason), 256), string(encoded), s.now())
+		candidate.HomeTeam, candidate.AwayTeam, candidate.DecisionRank, marketKey, legacyMinimumOdds, derefFloat(observedOdds), truncate(strings.TrimSpace(reason), 256), string(encoded), s.now())
 	return err
 }
 
-func (s *Service) RecordPlaced(ctx context.Context, seasonID string, round int, quotedOdds float64, betReference string) error {
-	settings, summary, candidate, err := s.validateRoundAction(ctx, seasonID, round)
+func (s *Service) RecordPlaced(ctx context.Context, seasonID string, round int, matchID int64, quotedOdds float64, betReference string) error {
+	_, summary, candidate, err := s.validateCandidateAction(ctx, seasonID, round, matchID)
 	if err != nil {
 		return err
 	}
-	if quotedOdds < settings.MinimumOdds {
-		return errors.New("quoted odds are below the configured minimum")
-	}
-	if summary.PendingSettlements > 0 {
-		return errors.New("cannot place while a prior bet is awaiting settlement")
+	if !isFinite(quotedOdds) || quotedOdds <= 0 {
+		return errors.New("quoted odds must be positive")
 	}
 	payload := map[string]any{
 		"decision_basis":         candidate.DecisionBasis,
 		"decision_outcome":       candidate.DecisionOutcome,
 		"decision_probability":   candidate.DecisionProbability,
-		"minimum_odds":           settings.MinimumOdds,
 		"point_in_time_verified": candidate.PointInTimeVerified,
+		"qualification_rule":     qualificationRule,
 	}
 	if candidate.DecisionMarketDifference != nil {
 		payload["decision_market_difference"] = *candidate.DecisionMarketDifference
@@ -605,10 +611,10 @@ INSERT INTO auto_betting_rounds (
     minimum_odds, quoted_odds, potential_return, bet_reference, decision_payload,
     placed_at, updated_at
 ) VALUES (
-    $1, $2, $3::uuid, $4::uuid, $5, $6, $7, 1, $8, 'placed', $9,
-    $10, $11, $12, NULLIF($13, ''), $14::jsonb, $15, $15
+    $1, $2, $3::uuid, $4::uuid, $5, $6, $7, $8, $9, 'placed', $10,
+    $11, $12, $13, NULLIF($14, ''), $15::jsonb, $16, $16
 )`, candidate.SeasonID, candidate.Round, candidate.PredictionRunID, candidate.PredictionRevisionID, candidate.MatchID,
-		candidate.HomeTeam, candidate.AwayTeam, marketKey, summary.NextStake, settings.MinimumOdds, quotedOdds, potential, truncate(strings.TrimSpace(betReference), 256), string(encoded), s.now())
+		candidate.HomeTeam, candidate.AwayTeam, candidate.DecisionRank, marketKey, summary.NextStake, legacyMinimumOdds, quotedOdds, potential, truncate(strings.TrimSpace(betReference), 256), string(encoded), s.now())
 	return err
 }
 
@@ -692,9 +698,9 @@ WHERE auto_betting_round_id = $1::uuid AND status = 'placed'`, id, status, reali
 	return err
 }
 
-func (s *Service) validateRoundAction(ctx context.Context, seasonID string, round int) (Settings, SeasonSummary, *Candidate, error) {
-	if strings.TrimSpace(seasonID) == "" || round < 1 || round > 30 {
-		return Settings{}, SeasonSummary{}, nil, errors.New("invalid season or round")
+func (s *Service) validateCandidateAction(ctx context.Context, seasonID string, round int, matchID int64) (Settings, SeasonSummary, *Candidate, error) {
+	if strings.TrimSpace(seasonID) == "" || round < 1 || round > 30 || matchID <= 0 {
+		return Settings{}, SeasonSummary{}, nil, errors.New("invalid season, round, or match")
 	}
 	settings, err := s.loadSettings(ctx)
 	if err != nil {
@@ -708,48 +714,41 @@ func (s *Service) validateRoundAction(ctx context.Context, seasonID string, roun
 		return Settings{}, SeasonSummary{}, nil, errors.New("season is paused after reaching the profit target")
 	}
 	var exists bool
-	if err := s.DB.QueryRowContext(ctx, `SELECT EXISTS (SELECT 1 FROM auto_betting_rounds WHERE season_id = $1 AND round_no = $2)`, seasonID, round).Scan(&exists); err != nil {
+	if err := s.DB.QueryRowContext(ctx, `
+SELECT EXISTS (
+    SELECT 1
+    FROM auto_betting_rounds
+    WHERE season_id = $1 AND round_no = $2 AND match_id = $3
+)`, seasonID, round, matchID).Scan(&exists); err != nil {
 		return Settings{}, SeasonSummary{}, nil, err
 	}
 	if exists {
-		return Settings{}, SeasonSummary{}, nil, errors.New("round already has an auto betting decision")
+		return Settings{}, SeasonSummary{}, nil, errors.New("match already has an auto betting decision")
 	}
-	candidate, err := s.candidateForRound(ctx, seasonID, round, settings, summary)
+	candidates, err := s.candidatesForRound(ctx, seasonID, round, summary.NextStake)
 	if err != nil {
 		return Settings{}, SeasonSummary{}, nil, err
 	}
-	if candidate == nil {
-		return Settings{}, SeasonSummary{}, nil, errors.New("no frozen betting candidate is available for this round")
+	for index := range candidates {
+		if candidates[index].MatchID == matchID {
+			return settings, summary, &candidates[index], nil
+		}
 	}
-	return settings, summary, candidate, nil
+	return Settings{}, SeasonSummary{}, nil, errors.New("no qualifying frozen betting candidate is available for this match")
 }
 
-func (s *Service) nextCandidate(ctx context.Context, seasonID string, settings Settings, summary SeasonSummary) (*Candidate, error) {
-	if !settings.Enabled || summary.Paused || summary.PendingSettlements > 0 {
-		return nil, nil
+func (s *Service) nextCandidates(ctx context.Context, seasonID string, settings Settings, summary SeasonSummary) ([]Candidate, error) {
+	if !settings.Enabled || summary.Paused {
+		return []Candidate{}, nil
 	}
-	currentRound, err := s.currentUpcomingRound(ctx, seasonID)
-	if err != nil {
-		return nil, err
+	round, err := s.nextEligibleRound(ctx, seasonID, summary.NextStake)
+	if err != nil || round == 0 {
+		return []Candidate{}, err
 	}
-	if currentRound == 0 {
-		return nil, nil
-	}
-	var exists bool
-	if err := s.DB.QueryRowContext(ctx, `SELECT EXISTS (SELECT 1 FROM auto_betting_rounds WHERE season_id = $1 AND round_no = $2)`, seasonID, currentRound).Scan(&exists); err != nil {
-		return nil, err
-	}
-	if exists {
-		return nil, nil
-	}
-	return s.canonicalCandidateForRound(ctx, seasonID, currentRound, settings, summary.NextStake)
+	return s.candidatesForRound(ctx, seasonID, round, summary.NextStake)
 }
 
-func (s *Service) candidateForRound(ctx context.Context, seasonID string, round int, settings Settings, summary SeasonSummary) (*Candidate, error) {
-	return s.canonicalCandidateForRound(ctx, seasonID, round, settings, summary.NextStake)
-}
-
-func (s *Service) canonicalCandidateForRound(ctx context.Context, seasonID string, round int, settings Settings, stake float64) (*Candidate, error) {
+func (s *Service) candidatesForRound(ctx context.Context, seasonID string, round int, stake float64) ([]Candidate, error) {
 	rows, err := s.DB.QueryContext(ctx, `
 SELECT DISTINCT ON (p.season_id, p.round_no, pr.match_id)
        p.prediction_run_id::text, pr.prediction_revision_id::text, p.season_id, p.round_no,
@@ -765,10 +764,18 @@ WHERE p.season_id = $1
   AND p.round_no = $2
   AND p.status = 'frozen'
   AND p.generated_fixture_count = 8
+  AND pr.status = 'frozen'
+  AND NOT EXISTS (
+      SELECT 1
+      FROM auto_betting_rounds existing
+      WHERE existing.season_id = p.season_id
+        AND existing.round_no = p.round_no
+        AND existing.match_id = pr.match_id
+  )
 ORDER BY p.season_id, p.round_no, pr.match_id,
          p.prediction_as_of DESC, pr.revision_no DESC`, seasonID, round)
 	if err != nil {
-		return nil, err
+		return []Candidate{}, err
 	}
 	defer rows.Close()
 	predictions := make([]predictionRow, 0, 8)
@@ -780,61 +787,86 @@ ORDER BY p.season_id, p.round_no, pr.match_id,
 			&item.MatchID, &item.HomeTeam, &item.AwayTeam, &item.ScheduledAt, &item.Status,
 			&item.Probability.Home, &item.Probability.Draw, &item.Probability.Away,
 			&payload, &item.PointInTimeVerified, &oddsAt); err != nil {
-			return nil, err
+			return []Candidate{}, err
 		}
 		item.ScheduledAt = item.ScheduledAt.UTC()
 		if oddsAt.Valid {
 			value := oddsAt.Time.UTC()
 			item.OddsObservedAt = &value
 		}
+		if !qualifiesForOver15(item.Probability) {
+			continue
+		}
 		applyPredictionPayload(&item, payload)
 		predictions = append(predictions, item)
 	}
 	if err := rows.Err(); err != nil {
-		return nil, err
+		return []Candidate{}, err
 	}
 	if len(predictions) == 0 {
-		return nil, nil
+		return []Candidate{}, nil
 	}
 	ranked := rankPredictions(predictions)
-	best := ranked[0]
-	return &Candidate{
-		SeasonID:                 best.SeasonID,
-		Round:                    best.Round,
-		PredictionRunID:          best.PredictionRunID,
-		PredictionRevisionID:     best.PredictionRevisionID,
-		MatchID:                  best.MatchID,
-		HomeTeam:                 best.HomeTeam,
-		AwayTeam:                 best.AwayTeam,
-		ScheduledAt:              best.ScheduledAt,
-		Status:                   best.Status,
-		DecisionRank:             best.DecisionRank,
-		DecisionBasis:            best.DecisionBasis,
-		DecisionOutcome:          best.DecisionOutcome,
-		DecisionProbability:      best.DecisionProbability,
-		DecisionMarketDifference: best.DecisionMarketDifference,
-		PointInTimeVerified:      best.PointInTimeVerified,
-		OddsObservedAt:           best.OddsObservedAt,
-		StakeAmount:              stake,
-		MinimumOdds:              settings.MinimumOdds,
-	}, nil
+	result := make([]Candidate, 0, len(ranked))
+	for _, item := range ranked {
+		result = append(result, Candidate{
+			SeasonID:                 item.SeasonID,
+			Round:                    item.Round,
+			PredictionRunID:          item.PredictionRunID,
+			PredictionRevisionID:     item.PredictionRevisionID,
+			MatchID:                  item.MatchID,
+			HomeTeam:                 item.HomeTeam,
+			AwayTeam:                 item.AwayTeam,
+			ScheduledAt:              item.ScheduledAt,
+			Status:                   item.Status,
+			DecisionRank:             item.DecisionRank,
+			DecisionBasis:            item.DecisionBasis,
+			DecisionOutcome:          item.DecisionOutcome,
+			DecisionProbability:      item.DecisionProbability,
+			DecisionMarketDifference: item.DecisionMarketDifference,
+			PointInTimeVerified:      item.PointInTimeVerified,
+			OddsObservedAt:           item.OddsObservedAt,
+			StakeAmount:              stake,
+		})
+	}
+	return result, nil
 }
 
-func (s *Service) currentUpcomingRound(ctx context.Context, seasonID string) (int, error) {
-	var round int
-	err := s.DB.QueryRowContext(ctx, `
-SELECT round_no
-FROM round_states
-WHERE season_id = $1
-  AND state NOT IN ('settled', 'missed_cutoff')
-  AND earliest_kickoff_at IS NOT NULL
-  AND earliest_kickoff_at >= $2
-ORDER BY round_no
-LIMIT 1`, seasonID, s.now()).Scan(&round)
-	if errors.Is(err, sql.ErrNoRows) {
-		return 0, nil
+func (s *Service) nextEligibleRound(ctx context.Context, seasonID string, stake float64) (int, error) {
+	rows, err := s.DB.QueryContext(ctx, `
+SELECT DISTINCT p.round_no
+FROM prediction_runs p
+JOIN round_states rs ON rs.season_id = p.season_id AND rs.round_no = p.round_no
+WHERE p.season_id = $1
+  AND p.status = 'frozen'
+  AND p.generated_fixture_count = 8
+  AND rs.state NOT IN ('settled', 'missed_cutoff')
+  AND rs.earliest_kickoff_at IS NOT NULL
+  AND rs.earliest_kickoff_at >= $2
+ORDER BY p.round_no`, seasonID, s.now())
+	if err != nil {
+		return 0, err
 	}
-	return round, err
+	defer rows.Close()
+	for rows.Next() {
+		var round int
+		if err := rows.Scan(&round); err != nil {
+			return 0, err
+		}
+		candidates, err := s.candidatesForRound(ctx, seasonID, round, stake)
+		if err != nil {
+			return 0, err
+		}
+		if len(candidates) > 0 {
+			return round, nil
+		}
+	}
+	return 0, rows.Err()
+}
+
+func qualifiesForOver15(value probability) bool {
+	return (value.Home > value.Away && value.Draw > value.Away) ||
+		(value.Away > value.Home && value.Draw > value.Home)
 }
 
 func rankPredictions(items []predictionRow) []rankedPrediction {
@@ -951,15 +983,14 @@ func (s *Service) loadSettings(ctx context.Context) (Settings, error) {
 	var maskedUsername, usernameCiphertext, passwordCiphertext sql.NullString
 	var credentialsUpdatedAt sql.NullTime
 	err := s.DB.QueryRowContext(ctx, `
-SELECT enabled, base_stake::double precision, profit_target::double precision, minimum_odds::double precision,
-       stake_reset_at, updated_at, COALESCE(bet9ja_username_masked, ''), credentials_updated_at,
+SELECT enabled, base_stake::double precision, profit_target::double precision,
+	       updated_at, COALESCE(bet9ja_username_masked, ''), credentials_updated_at,
        COALESCE(bet9ja_username_ciphertext, ''), COALESCE(bet9ja_password_ciphertext, '')
 FROM auto_betting_settings
-WHERE setting_key = $1`, primaryKey).Scan(&settings.Enabled, &settings.BaseStake, &settings.ProfitTarget, &settings.MinimumOdds, &settings.StakeResetAt, &settings.UpdatedAt, &maskedUsername, &credentialsUpdatedAt, &usernameCiphertext, &passwordCiphertext)
+WHERE setting_key = $1`, primaryKey).Scan(&settings.Enabled, &settings.BaseStake, &settings.ProfitTarget, &settings.UpdatedAt, &maskedUsername, &credentialsUpdatedAt, &usernameCiphertext, &passwordCiphertext)
 	if err != nil {
 		return Settings{}, err
 	}
-	settings.StakeResetAt = settings.StakeResetAt.UTC()
 	settings.UpdatedAt = settings.UpdatedAt.UTC()
 	if maskedUsername.Valid {
 		settings.MaskedUsername = maskedUsername.String
@@ -1039,31 +1070,17 @@ WHERE season_id = $1`, seasonID).Scan(&summary.TotalStaked, &summary.TotalReturn
 	if err != nil {
 		return SeasonSummary{}, err
 	}
-	var latestStatus string
-	var latestStake float64
-	err = s.DB.QueryRowContext(ctx, `
-SELECT status, stake_amount::double precision
-FROM auto_betting_rounds
-WHERE season_id = $1
-  AND created_at >= $2
-  AND status IN ('won', 'lost', 'void')
-ORDER BY round_no DESC, updated_at DESC
-LIMIT 1`, seasonID, settings.StakeResetAt).Scan(&latestStatus, &latestStake)
-	if err != nil && !errors.Is(err, sql.ErrNoRows) {
-		return SeasonSummary{}, err
-	}
 	var pendingStake float64
 	err = s.DB.QueryRowContext(ctx, `
-SELECT COALESCE(max(stake_amount), 0)::double precision
+SELECT COALESCE(sum(stake_amount), 0)::double precision
 FROM auto_betting_rounds
 WHERE season_id = $1
-  AND created_at >= $2
-  AND status = 'placed'`, seasonID, settings.StakeResetAt).Scan(&pendingStake)
+  AND status = 'placed'`, seasonID).Scan(&pendingStake)
 	if err != nil {
 		return SeasonSummary{}, err
 	}
 	summary.ActivePendingStake = pendingStake
-	summary.NextStake = determineNextStake(settings.BaseStake, summary.PendingSettlements, pendingStake, latestStatus, latestStake)
+	summary.NextStake = determineNextStake(settings.BaseStake)
 	summary.ProfitTargetReached = summary.TotalProfit >= settings.ProfitTarget
 	if summary.ProfitTargetReached {
 		summary.Paused = true
@@ -1074,8 +1091,8 @@ WHERE season_id = $1
 
 func (s *Service) loadRecentRounds(ctx context.Context, limit int) ([]RoundRecord, error) {
 	rows, err := s.DB.QueryContext(ctx, `
-SELECT season_id, round_no, status, home_team, away_team, stake_amount::double precision,
-       minimum_odds::double precision, quoted_odds::double precision, potential_return::double precision,
+SELECT season_id, round_no, COALESCE(match_id, 0), status, home_team, away_team, stake_amount::double precision,
+       quoted_odds::double precision, potential_return::double precision,
        realized_return::double precision, realized_profit::double precision, COALESCE(skip_reason, ''),
        COALESCE(bet_reference, ''), placed_at, settled_at, created_at
 FROM auto_betting_rounds
@@ -1090,8 +1107,8 @@ LIMIT $1`, limit)
 		var item RoundRecord
 		var quoted, potential, realizedReturn, realizedProfit sql.NullFloat64
 		var placedAt, settledAt sql.NullTime
-		if err := rows.Scan(&item.SeasonID, &item.Round, &item.Status, &item.HomeTeam, &item.AwayTeam, &item.StakeAmount,
-			&item.MinimumOdds, &quoted, &potential, &realizedReturn, &realizedProfit, &item.SkipReason, &item.BetReference, &placedAt, &settledAt, &item.CreatedAt); err != nil {
+		if err := rows.Scan(&item.SeasonID, &item.Round, &item.MatchID, &item.Status, &item.HomeTeam, &item.AwayTeam, &item.StakeAmount,
+			&quoted, &potential, &realizedReturn, &realizedProfit, &item.SkipReason, &item.BetReference, &placedAt, &settledAt, &item.CreatedAt); err != nil {
 			return nil, err
 		}
 		item.CreatedAt = item.CreatedAt.UTC()
@@ -1137,13 +1154,9 @@ func roundMoney(value float64) float64 {
 	return float64(int(value*100+0.5)) / 100
 }
 
-func determineNextStake(baseStake float64, pendingSettlements int, pendingStake float64, latestStatus string, latestStake float64) float64 {
-	if pendingSettlements > 0 && pendingStake > 0 {
-		return roundMoney(pendingStake)
-	}
-	if latestStatus == "lost" && latestStake > 0 {
-		return roundMoney(latestStake * 2)
-	}
+func determineNextStake(baseStake float64) float64 {
+	// Staking is flat: every qualifying bet uses the configured base stake,
+	// regardless of settlement state or the previous result.
 	return roundMoney(baseStake)
 }
 

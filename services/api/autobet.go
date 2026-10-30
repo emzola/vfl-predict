@@ -191,6 +191,7 @@ func (s *Server) autoBettingInternalSkip(w http.ResponseWriter, r *http.Request)
 		return
 	}
 	var input struct {
+		MatchID      int64    `json:"match_id"`
 		Reason       string   `json:"reason"`
 		ObservedOdds *float64 `json:"observed_odds"`
 	}
@@ -198,9 +199,13 @@ func (s *Server) autoBettingInternalSkip(w http.ResponseWriter, r *http.Request)
 		writeError(w, http.StatusBadRequest, "invalid skip payload")
 		return
 	}
+	if input.MatchID <= 0 {
+		writeError(w, http.StatusBadRequest, "match_id must be positive")
+		return
+	}
 	service := autobet.NewService(s.DB)
 	service.Now = s.now
-	if err := service.RecordSkip(r.Context(), seasonID, round, input.Reason, input.ObservedOdds); err != nil {
+	if err := service.RecordSkip(r.Context(), seasonID, round, input.MatchID, input.Reason, input.ObservedOdds); err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
@@ -217,11 +222,16 @@ func (s *Server) autoBettingInternalPlaced(w http.ResponseWriter, r *http.Reques
 		return
 	}
 	var input struct {
+		MatchID      int64   `json:"match_id"`
 		QuotedOdds   float64 `json:"quoted_odds"`
 		BetReference string  `json:"bet_reference"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&input); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid placed payload")
+		return
+	}
+	if input.MatchID <= 0 {
+		writeError(w, http.StatusBadRequest, "match_id must be positive")
 		return
 	}
 	if input.QuotedOdds <= 0 {
@@ -230,7 +240,7 @@ func (s *Server) autoBettingInternalPlaced(w http.ResponseWriter, r *http.Reques
 	}
 	service := autobet.NewService(s.DB)
 	service.Now = s.now
-	if err := service.RecordPlaced(r.Context(), seasonID, round, input.QuotedOdds, input.BetReference); err != nil {
+	if err := service.RecordPlaced(r.Context(), seasonID, round, input.MatchID, input.QuotedOdds, input.BetReference); err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}

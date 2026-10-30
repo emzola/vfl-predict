@@ -70,11 +70,12 @@ async function main() {
       if (task?.status === "disabled" || task?.settings?.enabled === false) {
         await handleTask(task);
       } else if (unconfirmedBet) {
+        const candidate = currentCandidate(task);
         await reportRuntime({
           state: "error",
           current_season_id: task?.current_season_id || unconfirmedBet.seasonID,
-          current_round: task?.candidate?.round || unconfirmedBet.round,
-          current_match_id: task?.candidate?.match_id || unconfirmedBet.matchID,
+          current_round: candidate?.round || unconfirmedBet.round,
+          current_match_id: candidate?.match_id || unconfirmedBet.matchID,
           last_error: unconfirmedBet.message,
         });
       } else {
@@ -92,12 +93,13 @@ async function main() {
       }
       lastFailure = describeFailure(error, task);
       consecutiveFailures += 1;
+      const candidate = currentCandidate(task);
       console.error(`[autobet] ${lastFailure}`);
       await reportRuntime({
         state: "error",
         current_season_id: task?.current_season_id || unconfirmedBet?.seasonID || "",
-        current_round: task?.candidate?.round || unconfirmedBet?.round || 0,
-        current_match_id: task?.candidate?.match_id || unconfirmedBet?.matchID || 0,
+        current_round: candidate?.round || unconfirmedBet?.round || 0,
+        current_match_id: candidate?.match_id || unconfirmedBet?.matchID || 0,
         last_error: unconfirmedBet?.message || lastFailure,
       });
       if (consecutiveFailures >= maxConsecutiveFailures && !(error instanceof WorkerUnconfirmedBetError)) {
@@ -112,12 +114,32 @@ async function main() {
   }
 }
 
+function taskBets(task) {
+  if (Array.isArray(task?.bets)) return task.bets;
+  if (task?.candidate) return [{ candidate: task.candidate, selection: task.selection }];
+  return [];
+}
+
+function firstCandidate(task) {
+  return taskBets(task)[0]?.candidate;
+}
+
+function currentCandidate(task) {
+  const matchID = Number(task?.runtime?.current_match_id || 0);
+  if (matchID > 0) {
+    const match = taskBets(task).find((bet) => Number(bet?.candidate?.match_id) === matchID);
+    if (match?.candidate) return match.candidate;
+  }
+  return firstCandidate(task);
+}
+
 async function handleTask(task) {
-  const candidate = task?.candidate;
+  const bets = taskBets(task);
+  const first = bets[0]?.candidate;
   const runtime = {
     current_season_id: task?.current_season_id || "",
-    current_round: candidate?.round || 0,
-    current_match_id: candidate?.match_id || 0,
+    current_round: first?.round || 0,
+    current_match_id: first?.match_id || 0,
     last_login_at: provider.lastLoginAt || undefined,
     last_error: unconfirmedBet?.message || lastFailure,
   };
@@ -163,7 +185,7 @@ async function handleTask(task) {
   }
   await provider.ensureLoggedIn(credentials);
 
-  if (task.status !== "ready" || !candidate) {
+  if (task.status !== "ready" || bets.length === 0) {
     consecutiveFailures = 0;
     await reportRuntime({
       ...runtime,
@@ -173,68 +195,81 @@ async function handleTask(task) {
     });
     return;
   }
-  if (!task.selection) {
-    throw new Error("No current live Over 1.5 selection was available for the candidate match.");
-  }
+  let transientError = "";
+  let lastCandidate = first;
+  for (const bet of bets) {
+    const candidate = bet?.candidate;
+    lastCandidate = candidate || lastCandidate;
+    if (!candidate) continue;
+    if (!bet?.selection) {
+      transientError = `No current live Over 1.5 selection was available for match ${candidate.match_id}.`;
+      continue;
+    }
 
-  await reportRuntime({
-    ...runtime,
-    state: "placing",
-    last_login_at: provider.lastLoginAt || undefined,
-    last_heartbeat_at: new Date().toISOString(),
-  });
-
-  const result = await placeCandidate(candidate, task.selection, credentials);
-  if (result.action === "skip") {
-    await apiRequest(`/internal/v1/auto-betting/rounds/${encodeURIComponent(candidate.season_id)}/${candidate.round}/skip`, {
-      method: "POST",
-      body: JSON.stringify({
-        reason: result.reason,
-        observed_odds: typeof result.observedOdds === "number" ? result.observedOdds : undefined,
-      }),
-    });
-    lastFailure = "";
-    consecutiveFailures = 0;
     await reportRuntime({
       ...runtime,
-      state: "idle",
+      current_round: candidate.round,
+      current_match_id: candidate.match_id,
+      state: "placing",
       last_login_at: provider.lastLoginAt || undefined,
-      last_error: "",
       last_heartbeat_at: new Date().toISOString(),
     });
-    return;
+
+    let result;
+    try {
+      result = await placeCandidate(candidate, bet.selection, credentials);
+    } catch (error) {
+      if (error instanceof StaleOddsError) {
+        transientError = normalizeError(error);
+        continue;
+      }
+      throw error;
+    }
+    if (result.action === "skip") {
+      await apiRequest(`/internal/v1/auto-betting/rounds/${encodeURIComponent(candidate.season_id)}/${candidate.round}/skip`, {
+        method: "POST",
+        body: JSON.stringify({
+          match_id: candidate.match_id,
+          reason: result.reason,
+          observed_odds: typeof result.observedOdds === "number" ? result.observedOdds : undefined,
+        }),
+      });
+      continue;
+    }
+
+    try {
+      await apiRequest(`/internal/v1/auto-betting/rounds/${encodeURIComponent(candidate.season_id)}/${candidate.round}/placed`, {
+        method: "POST",
+        body: JSON.stringify({
+          match_id: candidate.match_id,
+          quoted_odds: result.quotedOdds,
+          bet_reference: result.betReference || "",
+        }),
+      });
+    } catch (error) {
+      throw new WorkerUnconfirmedBetError(
+        `Bet9ja accepted ticket ${result.betReference || "without a reference"}, but the internal ledger could not record it. Do not retry automatically: ${normalizeError(error)}`,
+        candidate,
+        result.betReference || "",
+      );
+    }
   }
 
-  try {
-    await apiRequest(`/internal/v1/auto-betting/rounds/${encodeURIComponent(candidate.season_id)}/${candidate.round}/placed`, {
-      method: "POST",
-      body: JSON.stringify({
-        quoted_odds: result.quotedOdds,
-        bet_reference: result.betReference || "",
-      }),
-    });
-  } catch (error) {
-    throw new WorkerUnconfirmedBetError(
-      `Bet9ja accepted ticket ${result.betReference || "without a reference"}, but the internal ledger could not record it. Do not retry automatically: ${normalizeError(error)}`,
-      candidate,
-      result.betReference || "",
-    );
-  }
-
-  lastFailure = "";
+  lastFailure = transientError;
   consecutiveFailures = 0;
   await reportRuntime({
     ...runtime,
-    state: "awaiting_settlement",
+    current_round: lastCandidate?.round || runtime.current_round,
+    current_match_id: lastCandidate?.match_id || runtime.current_match_id,
+    state: transientError ? "ready" : "idle",
     last_login_at: provider.lastLoginAt || undefined,
-    last_error: "",
+    last_error: transientError,
     last_heartbeat_at: new Date().toISOString(),
   });
 }
 
 async function placeCandidate(candidate, selection, credentials) {
   const decimalOdds = Number(selection.decimal_odds);
-  const minimumOdds = Number(candidate.minimum_odds || 0);
   if (Number(selection.market_id) !== 18 || selection.specifiers !== "total=1.5" || String(selection.outcome_id) !== "12") {
     throw new Error("The live selection did not match the configured Over 1.5 market.");
   }
@@ -251,14 +286,6 @@ async function placeCandidate(candidate, selection, credentials) {
   if (!Number.isFinite(observedAt) || Date.now() - observedAt > maxOddsAgeMs) {
     throw new StaleOddsError(`Live Over 1.5 odds are stale or unavailable (maximum age ${Math.round(maxOddsAgeMs / 1000)} seconds).`);
   }
-  if (decimalOdds < minimumOdds) {
-    return {
-      action: "skip",
-      reason: `Over 1.5 odds ${decimalOdds.toFixed(2)} were below the configured minimum ${minimumOdds.toFixed(2)}.`,
-      observedOdds: decimalOdds,
-    };
-  }
-
   const buildPayload = () => buildBetPayload(candidate, selection, {
     bookmakerID,
     sessionID: provider.sessionID,
@@ -354,7 +381,7 @@ async function apiRequest(pathname, init = {}) {
 }
 
 function describeFailure(error, task) {
-  const candidate = task?.candidate;
+  const candidate = currentCandidate(task);
   const round = candidate
     ? ` [season ${candidate.season_id} round ${candidate.round}: ${candidate.home_team} - ${candidate.away_team}]`
     : "";
@@ -364,12 +391,13 @@ function describeFailure(error, task) {
 function restoreUnconfirmedBet(task) {
   if (unconfirmedBet) return;
   const runtime = task?.runtime;
+  const candidate = currentCandidate(task);
   const message = String(runtime?.last_error || "");
-  if (runtime?.state === "placing" && task?.candidate) {
+  if (runtime?.state === "placing" && candidate) {
     unconfirmedBet = {
-      seasonID: task.candidate.season_id || runtime?.current_season_id || "",
-      round: task.candidate.round || runtime?.current_round || 0,
-      matchID: task.candidate.match_id || runtime?.current_match_id || 0,
+      seasonID: candidate.season_id || runtime?.current_season_id || "",
+      round: candidate.round || runtime?.current_round || 0,
+      matchID: candidate.match_id || runtime?.current_match_id || 0,
       ticketID: "",
       message: "UNCONFIRMED_BET: worker restarted while a Bet9ja ticket request may have been in progress; reconcile the ticket before retrying.",
     };
@@ -377,9 +405,9 @@ function restoreUnconfirmedBet(task) {
   }
   if (runtime?.state !== "error" || !message.startsWith("UNCONFIRMED_BET:")) return;
   unconfirmedBet = {
-    seasonID: task?.candidate?.season_id || runtime?.current_season_id || "",
-    round: task?.candidate?.round || runtime?.current_round || 0,
-    matchID: task?.candidate?.match_id || runtime?.current_match_id || 0,
+    seasonID: candidate?.season_id || runtime?.current_season_id || "",
+    round: candidate?.round || runtime?.current_round || 0,
+    matchID: candidate?.match_id || runtime?.current_match_id || 0,
     ticketID: "",
     message,
   };

@@ -183,7 +183,6 @@ export type AutoBettingSettings = {
   enabled: boolean;
   base_stake: number;
   profit_target: number;
-  minimum_odds: number;
   credentials_configured: boolean;
   masked_username?: string;
   credentials_updated_at?: string;
@@ -239,17 +238,16 @@ export type AutoBettingCandidate = {
   point_in_time_verified: boolean;
   odds_observed_at?: string;
   stake_amount: number;
-  minimum_odds: number;
 };
 
 export type AutoBettingRoundRecord = {
   season_id: string;
   round: number;
+  match_id: number;
   status: string;
   home_team: string;
   away_team: string;
   stake_amount: number;
-  minimum_odds: number;
   quoted_odds?: number;
   potential_return?: number;
   realized_return?: number;
@@ -266,6 +264,8 @@ export type AutoBettingState = {
   runtime: AutoBettingRuntime;
   current_season_id?: string;
   season_summary?: AutoBettingSeasonSummary;
+  next_candidates?: AutoBettingCandidate[];
+  /** @deprecated Use next_candidates. */
   next_candidate?: AutoBettingCandidate;
   recent_rounds: AutoBettingRoundRecord[];
 };

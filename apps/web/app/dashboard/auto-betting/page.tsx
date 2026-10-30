@@ -5,7 +5,7 @@ import { apiFetch, csrfToken, errorMessage, formatDate, percentage } from "../..
 import type { AutoBettingState } from "../../../src/lib/types";
 import { ErrorState, FixtureLabel, LoadingState, MetricCard, PageHeading, StatusPill } from "../../../src/components/Ui";
 
-const RECENT_ROUNDS_PAGE_SIZE = 3;
+const RECENT_ROUNDS_PAGE_SIZE = 8;
 
 function naira(value?: number) {
   if (typeof value !== "number" || Number.isNaN(value)) return "—";
@@ -95,7 +95,7 @@ export default function AutoBettingPage() {
   if (!data) return <><PageHeading eyebrow="Auto betting" title="Automated staking" description="This page controls the separate betting worker and the internal staking ledger." /><LoadingState /></>;
 
   const summary = data.season_summary;
-  const candidate = data.next_candidate;
+  const candidates = data.next_candidates?.length ? data.next_candidates : data.next_candidate ? [data.next_candidate] : [];
   const recentRoundsPageCount = Math.max(1, Math.ceil(data.recent_rounds.length / RECENT_ROUNDS_PAGE_SIZE));
   const visibleRecentRoundsPage = Math.min(recentRoundsPage, recentRoundsPageCount);
   const visibleRecentRounds = data.recent_rounds.slice(
@@ -108,16 +108,16 @@ export default function AutoBettingPage() {
       <PageHeading
         eyebrow="Auto betting"
         title="Automated staking"
-        description="Auto betting uses the frozen rank #1 fixture only, always targets Over 1.5 Goals, skips missing or low-price markets, and tracks profit from the internal ledger instead of wallet balances."
+        description="Auto betting places flat-stake Over 1.5 Goals bets on every qualifying frozen prediction, accepts any valid odds, and tracks profit from the internal ledger instead of wallet balances."
         action={<StatusPill status={data.runtime.state || (data.settings.enabled ? "idle" : "disabled")} />}
       />
       {error && <div className="mb-5"><ErrorState message={error} /></div>}
 
       <section className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
         <MetricCard label="Auto betting" value={data.settings.enabled ? "Enabled" : "Disabled"} detail={"Updated " + formatDate(data.settings.updated_at)} tone={data.settings.enabled ? "good" : "warn"} />
-        <MetricCard label="Base stake" value={naira(data.settings.base_stake)} detail="Martingale resets to this amount after a win" />
+        <MetricCard label="Flat stake" value={naira(data.settings.base_stake)} detail="Every qualifying bet uses this amount" />
         <MetricCard label="Season profit" value={naira(summary?.total_profit || 0)} detail={summary?.season_id ? "Season " + summary.season_id : "No active season"} tone={summary?.total_profit && summary.total_profit > 0 ? "good" : "default"} />
-        <MetricCard label="Next stake" value={naira(summary?.next_stake || data.settings.base_stake)} detail={summary?.pending_settlements ? "Current stake is awaiting settlement" : "Next eligible round uses this stake"} tone={summary?.paused ? "warn" : "default"} />
+        <MetricCard label="Next stake" value={naira(summary?.next_stake || data.settings.base_stake)} detail="Unsettled bets do not block the next round" tone={summary?.paused ? "warn" : "default"} />
       </section>
 
       <section className="mt-6 grid gap-6 xl:grid-cols-[0.9fr_1.1fr]">
@@ -128,12 +128,12 @@ export default function AutoBettingPage() {
               <input type="checkbox" checked={enabled} onChange={(event) => setEnabled(event.target.checked)} className="mt-1 h-4 w-4 rounded border-slate-700 bg-slate-950 text-accent" />
               <span>
                 <span className="block font-medium text-white">Enable auto betting</span>
-                <span className="mt-1 block text-sm leading-6 text-slate-400">The worker will only place a bet when a frozen official round exists, the season profit target has not been reached, and no earlier placed bet is still awaiting settlement.</span>
+                <span className="mt-1 block text-sm leading-6 text-slate-400">The worker places one flat-stake Over 1.5 bet for every qualifying frozen prediction and can continue to later rounds while earlier bets await settlement.</span>
               </span>
             </label>
 
             <label className="block text-sm text-slate-300">
-              Starting stake amount (₦)
+              Flat stake amount (₦)
               <input
                 type="number"
                 min={1}
@@ -163,16 +163,16 @@ export default function AutoBettingPage() {
                 <p className="mt-1 font-semibold text-white">Over 1.5 Goals</p>
               </div>
               <div className="rounded-xl border border-slate-800 bg-slate-950/20 p-4 text-sm">
-                <p className="text-slate-500">Minimum odds</p>
-                <p className="mt-1 font-semibold text-white">{data.settings.minimum_odds.toFixed(2)}</p>
+                <p className="text-slate-500">Odds requirement</p>
+                <p className="mt-1 font-semibold text-white">Any valid odds</p>
               </div>
               <div className="rounded-xl border border-slate-800 bg-slate-950/20 p-4 text-sm">
                 <p className="text-slate-500">Profit target</p>
                 <p className="mt-1 font-semibold text-white">{naira(data.settings.profit_target)}</p>
               </div>
               <div className="rounded-xl border border-slate-800 bg-slate-950/20 p-4 text-sm">
-                <p className="text-slate-500">Martingale carry</p>
-                <p className="mt-1 font-semibold text-white">Skipped rounds keep the pending next stake</p>
+                <p className="text-slate-500">Staking model</p>
+                <p className="mt-1 font-semibold text-white">Flat staking</p>
               </div>
             </div>
 
@@ -259,36 +259,40 @@ export default function AutoBettingPage() {
       </section>
 
       <section className="panel mt-6 p-6">
-        <p className="eyebrow">Next candidate</p>
-        {!candidate ? <p className="mt-4 text-sm text-slate-400">No bet is currently ready. The worker is waiting for an eligible frozen round, a settled previous bet, or a new season after a profit-target pause.</p> : (
-          <div className="mt-4">
-            <div className="flex flex-wrap items-start justify-between gap-4">
-              <div>
-                <FixtureLabel matchId={candidate.match_id} home={candidate.home_team} away={candidate.away_team} kickoff={candidate.scheduled_at} />
-                <div className="mt-3 flex flex-wrap items-center gap-2">
-                  <span className="rounded-full border border-accent/30 bg-accent/10 px-2.5 py-1 text-[11px] font-semibold uppercase tracking-wider text-accent">Priority #{candidate.decision_rank}</span>
-                  <span className="text-xs text-slate-400">{candidate.decision_basis === "market_difference" ? "Model-vs-market rank" : "Model probability rank"}</span>
-                  {typeof candidate.decision_market_difference === "number" && <span className="text-xs text-accent">+{percentage(candidate.decision_market_difference)} pp</span>}
+        <p className="eyebrow">Next qualifying bets</p>
+        {candidates.length === 0 ? <p className="mt-4 text-sm text-slate-400">No qualifying bet is currently ready. The worker is waiting for frozen predictions, a new season after a profit-target pause, or valid live market data.</p> : (
+          <div className="mt-4 space-y-4">
+            {candidates.map((candidate) => (
+              <div key={candidate.match_id} className="rounded-xl border border-slate-800 bg-slate-950/20 p-4">
+                <div className="flex flex-wrap items-start justify-between gap-4">
+                  <div>
+                    <FixtureLabel matchId={candidate.match_id} home={candidate.home_team} away={candidate.away_team} kickoff={candidate.scheduled_at} />
+                    <div className="mt-3 flex flex-wrap items-center gap-2">
+                      <span className="rounded-full border border-accent/30 bg-accent/10 px-2.5 py-1 text-[11px] font-semibold uppercase tracking-wider text-accent">Eligible #{candidate.decision_rank}</span>
+                      <span className="text-xs text-slate-400">{candidate.decision_basis === "market_difference" ? "Model-vs-market rank" : "Model probability rank"}</span>
+                      {typeof candidate.decision_market_difference === "number" && <span className="text-xs text-accent">+{percentage(candidate.decision_market_difference)} pp</span>}
+                    </div>
+                  </div>
+                  <StatusPill status={candidate.status} />
+                </div>
+                <div className="mt-5 grid gap-3 text-sm text-slate-300 sm:grid-cols-2 lg:grid-cols-4">
+                  <div><p className="text-slate-500">Round</p><p className="mt-1">Season {candidate.season_id} · Round {candidate.round}</p></div>
+                  <div><p className="text-slate-500">Market</p><p className="mt-1 font-semibold text-white">Over 1.5 Goals</p></div>
+                  <div><p className="text-slate-500">Stake</p><p className="mt-1 font-semibold text-white">{naira(candidate.stake_amount)}</p></div>
+                  <div><p className="text-slate-500">Odds requirement</p><p className="mt-1 font-semibold text-white">Any valid odds</p></div>
                 </div>
               </div>
-              <StatusPill status={candidate.status} />
-            </div>
-            <div className="mt-5 grid gap-3 text-sm text-slate-300 sm:grid-cols-2 lg:grid-cols-4">
-              <div><p className="text-slate-500">Round</p><p className="mt-1">Season {candidate.season_id} · Round {candidate.round}</p></div>
-              <div><p className="text-slate-500">Market</p><p className="mt-1 font-semibold text-white">Over 1.5 Goals</p></div>
-              <div><p className="text-slate-500">Stake</p><p className="mt-1 font-semibold text-white">{naira(candidate.stake_amount)}</p></div>
-              <div><p className="text-slate-500">Odds floor</p><p className="mt-1 font-semibold text-white">{candidate.minimum_odds.toFixed(2)}</p></div>
-            </div>
+            ))}
           </div>
         )}
       </section>
 
       <section className="panel mt-6 p-6">
-        <p className="eyebrow">Recent round decisions</p>
+        <p className="eyebrow">Recent bet decisions</p>
         {data.recent_rounds.length === 0 ? <p className="mt-4 text-sm text-slate-400">No auto betting decisions have been recorded yet.</p> : (
           <div className="mt-4 space-y-3">
             {visibleRecentRounds.map((item) => (
-              <div key={item.season_id + ":" + item.round + ":" + item.created_at} className="rounded-xl border border-slate-800 bg-slate-950/20 p-4">
+              <div key={item.season_id + ":" + item.round + ":" + item.match_id + ":" + item.created_at} className="rounded-xl border border-slate-800 bg-slate-950/20 p-4">
                 <div className="flex flex-wrap items-start justify-between gap-3">
                   <div>
                     <p className="font-semibold text-white">{item.home_team} <span className="text-slate-500">vs</span> {item.away_team}</p>
