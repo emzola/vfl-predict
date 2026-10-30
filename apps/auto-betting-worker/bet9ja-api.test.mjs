@@ -45,7 +45,7 @@ test("buildBetPayload converts the documented ticket units and metadata", () => 
   assert.equal(payload[0].selections[0].metaData.tournament.event.competitors[0].id, "sr:competitor:276504");
 });
 
-test("Bet9jaApiClient scopes login cookies and matches ticket request headers", async () => {
+test("Bet9jaApiClient uses the login session ID and matches ticket request headers", async () => {
   const requests = [];
   const fetchImpl = async (url, init = {}) => {
     const parsed = new URL(url);
@@ -60,15 +60,9 @@ test("Bet9jaApiClient scopes login cookies and matches ticket request headers", 
       body: init.body || "",
     });
     if (parsed.pathname === "/login") {
-      return new Response(JSON.stringify({ status: 1, data: { auth: { status: 1 } } }), {
+      return new Response(JSON.stringify({ status: 1, data: { auth: { status: 1, data: { sessionId: "session-1" } } } }), {
         status: 200,
         headers: { "content-type": "application/json", "set-cookie": "sid=abc; Path=/; HttpOnly" },
-      });
-    }
-    if (parsed.pathname === "/getGames") {
-      return new Response(JSON.stringify({ status: 1, data: { games: "https://vgcommon.aitcloud.de/srvg-launcher/stable/bwg.html?clientId=1205&id=session-1&lang=en&product=vfb&refId=&timeZone=Africa:Lagos" } }), {
-        status: 200,
-        headers: { "content-type": "application/json" },
       });
     }
     if (init.method === "POST") {
@@ -86,7 +80,6 @@ test("Bet9jaApiClient scopes login cookies and matches ticket request headers", 
 
   const client = new Bet9jaApiClient({
     loginURL: "https://virtual.test/login",
-    initURL: "https://virtual.test/getGames",
     ticketsBaseURL: "https://akamai.test/bookmakers",
     bookmakerID: 9478,
     apiKey: "test-key",
@@ -98,30 +91,23 @@ test("Bet9jaApiClient scopes login cookies and matches ticket request headers", 
   assert.equal(client.sessionID, "session-1");
   assert.equal(requests[0].origin, "https://virtual.bet9ja.com");
   assert.equal(requests[0].referer, "https://virtual.bet9ja.com/virtual/?s=new");
-  assert.equal(requests[1].origin, "");
-  assert.equal(requests[1].referer, "https://virtual.bet9ja.com/virtual/?s=new");
+  assert.equal(requests[1].path.includes("/users/session-1/tickets"), true);
+  assert.equal(requests[1].cookie, "");
+  assert.equal(requests[1].origin, "https://launcherlive-vs001.akamaized.net");
+  assert.equal(requests[1].referer, "https://launcherlive-vs001.akamaized.net/");
   assert.equal(requests[1].accept, "*/*");
-  assert.equal(requests[1].cookie, "sid=abc");
+  await client.logout();
+  assert.equal(requests[2].path.includes("/users/session-1/tickets"), true);
   assert.equal(requests[2].cookie, "");
   assert.equal(requests[2].origin, "https://launcherlive-vs001.akamaized.net");
   assert.equal(requests[2].referer, "https://launcherlive-vs001.akamaized.net/");
-  assert.equal(requests[2].accept, "*/*");
-  await client.logout();
-  assert.equal(requests[2].path.includes("/users/session-1/tickets"), true);
-  assert.equal(requests[3].cookie, "");
-  assert.equal(requests[3].origin, "https://launcherlive-vs001.akamaized.net");
-  assert.equal(requests[3].referer, "https://launcherlive-vs001.akamaized.net/");
   assert.equal(client.authenticated, false);
 });
 
 test("session validation rejection is classified as authentication failure", async () => {
   const fetchImpl = async (url, init = {}) => {
-    const parsed = new URL(url);
     if (init.method === "POST" && String(init.body).includes("username")) {
-      return new Response(JSON.stringify({ status: 1, data: { auth: { status: 1 } } }), { status: 200 });
-    }
-    if (parsed.pathname === "/getGames") {
-      return new Response(JSON.stringify({ status: 1, data: { games: "https://vgcommon.aitcloud.de/srvg-launcher/stable/bwg.html?clientId=1205&id=session-1&lang=en&product=vfb&refId=&timeZone=Africa:Lagos" } }), { status: 200 });
+      return new Response(JSON.stringify({ status: 1, data: { auth: { status: 1, data: { sessionId: "session-1" } } } }), { status: 200 });
     }
     return new Response(JSON.stringify({
       errors: [{ message: "REJECTED_SESSION_VALIDATION: Session does not exist." }],
@@ -130,7 +116,6 @@ test("session validation rejection is classified as authentication failure", asy
   };
   const client = new Bet9jaApiClient({
     loginURL: "https://virtual.test/login",
-    initURL: "https://virtual.test/getGames",
     ticketsBaseURL: "https://akamai.test/bookmakers",
     bookmakerID: 9478,
     apiKey: "test-key",
@@ -150,18 +135,13 @@ test("session validation rejection is classified as authentication failure", asy
 
 test("an explicit provider auth response becomes a safe re-login signal", async () => {
   const fetchImpl = async (url, init = {}) => {
-    const parsed = new URL(url);
     if (init.method === "POST" && String(init.body).includes("username")) {
-      return new Response(JSON.stringify({ status: 1, data: { auth: { status: 1 } } }), { status: 200 });
-    }
-    if (parsed.pathname === "/getGames") {
-      return new Response(JSON.stringify({ status: 1, data: { games: "https://vgcommon.aitcloud.de/srvg-launcher/stable/bwg.html?clientId=1205&id=session-1&lang=en&product=vfb&refId=&timeZone=Africa:Lagos" } }), { status: 200 });
+      return new Response(JSON.stringify({ status: 1, data: { auth: { status: 1, data: { sessionId: "session-1" } } } }), { status: 200 });
     }
     return new Response(JSON.stringify({ status: -1, data: { auth: { status: -1 } } }), { status: 200 });
   };
   const client = new Bet9jaApiClient({
     loginURL: "https://tickets.test/login",
-    initURL: "https://tickets.test/getGames",
     ticketsBaseURL: "https://tickets.test/bookmakers",
     bookmakerID: 9478,
     apiKey: "test-key",
