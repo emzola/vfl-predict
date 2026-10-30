@@ -1,6 +1,10 @@
 const DEFAULT_LOGIN_URL = "https://virtual.bet9ja.com/commonmenu/CommonDesktopMenu/login";
 const DEFAULT_INIT_URL = "https://virtual.bet9ja.com/commonmenu/CommonDesktopMenu/getinit";
 const DEFAULT_TICKETS_BASE_URL = "https://rgspluslive-vs001.akamaized.net/betting-rest/bookmakers";
+const DEFAULT_AUTH_ORIGIN = "https://virtual.bet9ja.com";
+const DEFAULT_AUTH_REFERER = `${DEFAULT_AUTH_ORIGIN}/virtual/?s=new`;
+const DEFAULT_TICKET_ORIGIN = "https://launcherlive-vs001.akamaized.net";
+const DEFAULT_TICKET_REFERER = `${DEFAULT_TICKET_ORIGIN}/`;
 
 export class Bet9jaError extends Error {
   constructor(message, code = "bet9ja_error") {
@@ -143,19 +147,6 @@ export class CookieJar {
     this.cookies.clear();
   }
 
-  allHeader() {
-    const now = Date.now();
-    const values = [];
-    for (const [key, cookie] of this.cookies) {
-      if (cookie.expiresAt !== null && cookie.expiresAt <= now) {
-        this.cookies.delete(key);
-        continue;
-      }
-      values.push(`${cookie.name}=${cookie.value}`);
-    }
-    return values.join("; ");
-  }
-
   get size() {
     return this.cookies.size;
   }
@@ -166,6 +157,10 @@ export class Bet9jaApiClient {
     loginURL = DEFAULT_LOGIN_URL,
     initURL = DEFAULT_INIT_URL,
     ticketsBaseURL = DEFAULT_TICKETS_BASE_URL,
+    authOrigin = DEFAULT_AUTH_ORIGIN,
+    authReferer = DEFAULT_AUTH_REFERER,
+    ticketOrigin = DEFAULT_TICKET_ORIGIN,
+    ticketReferer = DEFAULT_TICKET_REFERER,
     bookmakerID,
     apiKey,
     timeoutMs = 30000,
@@ -175,6 +170,10 @@ export class Bet9jaApiClient {
     this.loginURL = loginURL;
     this.initURL = initURL;
     this.ticketsBaseURL = ticketsBaseURL.replace(/\/+$/, "");
+    this.authOrigin = String(authOrigin || DEFAULT_AUTH_ORIGIN).trim();
+    this.authReferer = String(authReferer || `${this.authOrigin}/virtual/?s=new`).trim();
+    this.ticketOrigin = String(ticketOrigin || DEFAULT_TICKET_ORIGIN).trim();
+    this.ticketReferer = String(ticketReferer || `${this.ticketOrigin}/`).trim();
     this.bookmakerID = bookmakerID;
     this.apiKey = String(apiKey || "").trim();
     this.timeoutMs = Math.max(1000, Number(timeoutMs) || 30000);
@@ -184,7 +183,6 @@ export class Bet9jaApiClient {
     this.credentials = null;
     this.lastLoginAt = null;
     this.sessionID = "";
-    this.loginCookieHeader = "";
   }
 
   get ticketsURL() {
@@ -205,7 +203,6 @@ export class Bet9jaApiClient {
     this.authenticated = false;
     this.cookieJar.clear();
     this.sessionID = "";
-    this.loginCookieHeader = "";
   }
 
   async ensureLoggedIn(credentials) {
@@ -231,6 +228,8 @@ export class Bet9jaApiClient {
       headers: {
         "Content-Type": "application/x-www-form-urlencoded",
         Accept: "application/json, text/plain, */*",
+        Origin: this.authOrigin,
+        Referer: this.authReferer,
       },
       body: form.toString(),
     });
@@ -256,14 +255,17 @@ export class Bet9jaApiClient {
     this.credentials = { username: String(credentials.username), password: String(credentials.password) };
     this.authenticated = true;
     this.lastLoginAt = new Date().toISOString();
-    // The login and ticket endpoints use different hostnames. Bridge the
-    // authenticated login cookies explicitly to the documented ticket endpoint.
-    this.loginCookieHeader = this.cookieJar.allHeader();
     return { login: result.payload, init: initPayload };
   }
 
   async getInit() {
-    const result = await this.request(this.initURL, { method: "GET" });
+    const result = await this.request(this.initURL, {
+      method: "GET",
+      headers: {
+        Accept: "*/*",
+        Referer: this.authReferer,
+      },
+    });
     if (!result.response.ok) {
       throw new Bet9jaAuthError(`Bet9ja getInit failed with HTTP ${result.response.status}.`);
     }
@@ -282,7 +284,10 @@ export class Bet9jaApiClient {
       if (!this.ticketsURL) {
         throw new Bet9jaConfigurationError("Bet9ja bookmaker, API key, and current session settings are required to log out.");
       }
-      const result = await this.request(this.ticketsURL, { method: "GET" });
+      const result = await this.request(this.ticketsURL, {
+        method: "GET",
+        headers: this.ticketRequestHeaders(),
+      });
       if (!result.response.ok) {
         throw new Bet9jaError(`Bet9ja logout failed with HTTP ${result.response.status}.`, "logout_error");
       }
@@ -303,10 +308,7 @@ export class Bet9jaApiClient {
     try {
       result = await this.request(this.ticketsURL, {
         method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          Accept: "application/json",
-        },
+        headers: this.ticketRequestHeaders({ "Content-Type": "application/json" }),
         body: JSON.stringify(payload),
       });
     } catch (error) {
@@ -347,10 +349,7 @@ export class Bet9jaApiClient {
     }
     const headers = new Headers(init.headers || {});
     if (!headers.has("Accept")) headers.set("Accept", "application/json");
-    const cookie = mergeCookieHeaders(
-      this.cookieJar.headerFor(url),
-      url === this.loginURL ? "" : this.loginCookieHeader,
-    );
+    const cookie = this.cookieJar.headerFor(url);
     if (cookie) headers.set("Cookie", cookie);
 
     const controller = new AbortController();
@@ -374,6 +373,15 @@ export class Bet9jaApiClient {
       }
     }
     return { response, payload, text };
+  }
+
+  ticketRequestHeaders(extra = {}) {
+    return {
+      Accept: "*/*",
+      Origin: this.ticketOrigin,
+      Referer: this.ticketReferer,
+      ...extra,
+    };
   }
 }
 
@@ -577,18 +585,5 @@ function defaultCookiePath(pathname) {
 
 function splitSetCookieHeader(value) {
   return String(value).split(/,(?=[^;,=]+=[^;,]+)/g).map((item) => item.trim()).filter(Boolean);
-}
-
-function mergeCookieHeaders(...headers) {
-  const cookies = new Map();
-  for (const header of headers) {
-    for (const item of String(header || "").split(";")) {
-      const value = item.trim();
-      const separator = value.indexOf("=");
-      if (separator <= 0) continue;
-      cookies.set(value.slice(0, separator), value.slice(separator + 1));
-    }
-  }
-  return [...cookies].map(([name, value]) => `${name}=${value}`).join("; ");
 }
 

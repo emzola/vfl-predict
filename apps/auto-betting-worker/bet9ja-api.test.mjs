@@ -45,12 +45,20 @@ test("buildBetPayload converts the documented ticket units and metadata", () => 
   assert.equal(payload[0].selections[0].metaData.tournament.event.competitors[0].id, "sr:competitor:276504");
 });
 
-test("Bet9jaApiClient reuses login cookies and parses an accepted ticket", async () => {
+test("Bet9jaApiClient scopes login cookies and matches ticket request headers", async () => {
   const requests = [];
   const fetchImpl = async (url, init = {}) => {
     const parsed = new URL(url);
     const headers = new Headers(init.headers || {});
-    requests.push({ method: init.method || "GET", path: parsed.pathname, cookie: headers.get("Cookie") || "", body: init.body || "" });
+    requests.push({
+      method: init.method || "GET",
+      path: parsed.pathname,
+      cookie: headers.get("Cookie") || "",
+      origin: headers.get("Origin") || "",
+      referer: headers.get("Referer") || "",
+      accept: headers.get("Accept") || "",
+      body: init.body || "",
+    });
     if (parsed.pathname === "/login") {
       return new Response(JSON.stringify({ status: 1, data: { auth: { status: 1 } } }), {
         status: 200,
@@ -88,10 +96,21 @@ test("Bet9jaApiClient reuses login cookies and parses an accepted ticket", async
   const placed = await client.placeBet([{ version: "2.2" }]);
   assert.equal(placed.ticketId, "ticket-1");
   assert.equal(client.sessionID, "session-1");
+  assert.equal(requests[0].origin, "https://virtual.bet9ja.com");
+  assert.equal(requests[0].referer, "https://virtual.bet9ja.com/virtual/?s=new");
+  assert.equal(requests[1].origin, "");
+  assert.equal(requests[1].referer, "https://virtual.bet9ja.com/virtual/?s=new");
+  assert.equal(requests[1].accept, "*/*");
+  assert.equal(requests[1].cookie, "sid=abc");
+  assert.equal(requests[2].cookie, "");
+  assert.equal(requests[2].origin, "https://launcherlive-vs001.akamaized.net");
+  assert.equal(requests[2].referer, "https://launcherlive-vs001.akamaized.net/");
+  assert.equal(requests[2].accept, "*/*");
   await client.logout();
   assert.equal(requests[2].path.includes("/users/session-1/tickets"), true);
-  assert.equal(requests[2].cookie, "sid=abc");
-  assert.equal(requests[3].cookie, "sid=abc");
+  assert.equal(requests[3].cookie, "");
+  assert.equal(requests[3].origin, "https://launcherlive-vs001.akamaized.net");
+  assert.equal(requests[3].referer, "https://launcherlive-vs001.akamaized.net/");
   assert.equal(client.authenticated, false);
 });
 
