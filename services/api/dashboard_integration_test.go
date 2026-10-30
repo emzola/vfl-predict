@@ -160,9 +160,12 @@ func TestPhase4DashboardDataIntegration(t *testing.T) {
 		t.Fatalf("auto betting settings did not persist profit target: %v", autoBetting)
 	}
 
-	history := assertJSON("/api/v1/dashboard/history", http.StatusOK)
+	history := assertJSON("/api/v1/dashboard/history?page=1&page_size=10", http.StatusOK)
 	if values, ok := history["predictions"].([]any); !ok || len(values) == 0 {
 		t.Fatalf("history did not return the deterministic prediction: %v", history)
+	}
+	if history["page"] != float64(1) || history["page_size"] != float64(10) || history["has_next"] != false {
+		t.Fatalf("history pagination metadata was incorrect: %v", history)
 	}
 	future := assertJSON("/api/v1/dashboard/future-rounds", http.StatusOK)
 	if values, ok := future["rounds"].([]any); !ok || len(values) == 0 {

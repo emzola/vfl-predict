@@ -429,7 +429,25 @@ func (s *Server) historyAPI(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusMethodNotAllowed, "method not allowed")
 		return
 	}
-	items, err := s.loadPredictionHistory(r, 512)
+	page := 1
+	if value := strings.TrimSpace(r.URL.Query().Get("page")); value != "" {
+		parsed, err := strconv.Atoi(value)
+		if err != nil || parsed < 1 || parsed > 1_000_000 {
+			writeError(w, http.StatusBadRequest, "invalid history pagination")
+			return
+		}
+		page = parsed
+	}
+	pageSize := 10
+	if value := strings.TrimSpace(r.URL.Query().Get("page_size")); value != "" {
+		parsed, err := strconv.Atoi(value)
+		if err != nil || parsed < 1 || parsed > 100 {
+			writeError(w, http.StatusBadRequest, "invalid history pagination")
+			return
+		}
+		pageSize = parsed
+	}
+	items, hasNext, err := s.loadPredictionHistory(r, pageSize, (page-1)*pageSize)
 	if err != nil {
 		if errors.Is(err, errInvalidAuthInput) {
 			writeError(w, http.StatusBadRequest, "invalid history filter")
@@ -438,7 +456,7 @@ func (s *Server) historyAPI(w http.ResponseWriter, r *http.Request) {
 		writeServerError(w, "could not load prediction history")
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"predictions": items, "provenance": "stored prediction revisions and settlements"})
+	writeJSON(w, http.StatusOK, map[string]any{"predictions": items, "page": page, "page_size": pageSize, "has_next": hasNext, "provenance": "stored prediction revisions and settlements"})
 }
 
 func (s *Server) matchRouter(w http.ResponseWriter, r *http.Request) {
@@ -930,42 +948,49 @@ func applyPredictionPayload(item *predictionView, payload []byte) {
 	item.FeatureValues = decoded.FeatureValues
 }
 
-func (s *Server) loadPredictionHistory(r *http.Request, limit int) ([]predictionView, error) {
+func (s *Server) loadPredictionHistory(r *http.Request, limit, offset int) ([]predictionView, bool, error) {
 	seasonID := strings.TrimSpace(r.URL.Query().Get("season_id"))
 	if seasonID != "" && !isSeasonID(seasonID) {
-		return nil, errInvalidAuthInput
+		return nil, false, errInvalidAuthInput
 	}
 	round := 0
 	if value := strings.TrimSpace(r.URL.Query().Get("round")); value != "" {
 		parsed, err := strconv.Atoi(value)
 		if err != nil || parsed < 1 || parsed > 30 {
-			return nil, errInvalidAuthInput
+			return nil, false, errInvalidAuthInput
 		}
 		round = parsed
 	}
 	status := strings.TrimSpace(r.URL.Query().Get("status"))
 	if !validPredictionStatus(status) {
-		return nil, errInvalidAuthInput
+		return nil, false, errInvalidAuthInput
 	}
 	model := strings.TrimSpace(r.URL.Query().Get("model"))
 	if len(model) > 128 {
-		return nil, errInvalidAuthInput
+		return nil, false, errInvalidAuthInput
 	}
-	query := "SELECT p.prediction_run_id::text, pr.prediction_revision_id::text, p.season_id, p.round_no, p.model_version, p.status, p.prediction_as_of, p.input_cutoff_at, p.earliest_kickoff_at, p.expected_fixture_count, p.generated_fixture_count, pr.match_id, f.scheduled_at, f.home_team_uid, ht.name, f.away_team_uid, at.name, f.status, f.result_home, f.result_away, pr.home_probability, pr.draw_probability, pr.away_probability, pr.probability_payload, pr.odds_observed_at, pr.provider_odds_timestamp_at, pr.point_in_time_verified, pr.eligible, COALESCE(pr.ineligible_reason, ''), pr.created_at, settlement.actual_outcome, settlement.correct, settlement.settlement_track FROM prediction_runs p JOIN prediction_revisions pr ON pr.prediction_run_id = p.prediction_run_id JOIN fixtures f ON f.match_id = pr.match_id JOIN teams ht ON ht.team_uid = f.home_team_uid JOIN teams at ON at.team_uid = f.away_team_uid LEFT JOIN LATERAL (SELECT actual_outcome, correct, settlement_track FROM prediction_settlements ps WHERE ps.prediction_revision_id = pr.prediction_revision_id ORDER BY correction_version DESC LIMIT 1) settlement ON TRUE WHERE ($1 = '' OR p.season_id = $1) AND ($2 = 0 OR p.round_no = $2) AND ($3 = '' OR p.status = $3) AND ($4 = '' OR p.model_version = $4) ORDER BY p.prediction_as_of DESC, pr.created_at DESC, pr.revision_no DESC LIMIT $5"
-	rows, err := s.DB.QueryContext(r.Context(), query, seasonID, round, status, model, limit)
+	query := "SELECT p.prediction_run_id::text, pr.prediction_revision_id::text, p.season_id, p.round_no, p.model_version, p.status, p.prediction_as_of, p.input_cutoff_at, p.earliest_kickoff_at, p.expected_fixture_count, p.generated_fixture_count, pr.match_id, f.scheduled_at, f.home_team_uid, ht.name, f.away_team_uid, at.name, f.status, f.result_home, f.result_away, pr.home_probability, pr.draw_probability, pr.away_probability, pr.probability_payload, pr.odds_observed_at, pr.provider_odds_timestamp_at, pr.point_in_time_verified, pr.eligible, COALESCE(pr.ineligible_reason, ''), pr.created_at, settlement.actual_outcome, settlement.correct, settlement.settlement_track FROM prediction_runs p JOIN prediction_revisions pr ON pr.prediction_run_id = p.prediction_run_id JOIN fixtures f ON f.match_id = pr.match_id JOIN teams ht ON ht.team_uid = f.home_team_uid JOIN teams at ON at.team_uid = f.away_team_uid LEFT JOIN LATERAL (SELECT actual_outcome, correct, settlement_track FROM prediction_settlements ps WHERE ps.prediction_revision_id = pr.prediction_revision_id ORDER BY correction_version DESC LIMIT 1) settlement ON TRUE WHERE ($1 = '' OR p.season_id = $1) AND ($2 = 0 OR p.round_no = $2) AND ($3 = '' OR p.status = $3) AND ($4 = '' OR p.model_version = $4) ORDER BY p.prediction_as_of DESC, pr.created_at DESC, pr.revision_no DESC LIMIT $5 OFFSET $6"
+	rows, err := s.DB.QueryContext(r.Context(), query, seasonID, round, status, model, limit+1, offset)
 	if err != nil {
-		return nil, err
+		return nil, false, err
 	}
 	defer rows.Close()
-	items := make([]predictionView, 0)
+	items := make([]predictionView, 0, limit+1)
 	for rows.Next() {
 		item, _, _, err := scanPredictionView(rows)
 		if err != nil {
-			return nil, err
+			return nil, false, err
 		}
 		items = append(items, item)
 	}
-	return items, rows.Err()
+	if err := rows.Err(); err != nil {
+		return nil, false, err
+	}
+	hasNext := len(items) > limit
+	if hasNext {
+		items = items[:limit]
+	}
+	return items, hasNext, nil
 }
 
 func (s *Server) loadMatchDetail(r *http.Request, matchID int64) (*matchDetail, error) {

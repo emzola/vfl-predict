@@ -7,20 +7,17 @@ import (
 	"bet9ja-vfl/services/provider"
 )
 
-func TestPollPlanUsesConservativeAdaptiveIntervals(t *testing.T) {
+func TestPollPlanUsesFixedInterval(t *testing.T) {
 	cfg := DefaultPollConfig()
 	now := time.Date(2026, 10, 25, 12, 0, 0, 0, time.UTC)
-	if got := (PollPlan{Now: now, Config: cfg}).NextDelay(); got != cfg.FutureOddsInterval {
-		t.Fatalf("no-imminent delay=%s want %s", got, cfg.FutureOddsInterval)
-	}
-	if got := (PollPlan{Now: now, NextKickoff: now.Add(4 * time.Minute), Config: cfg}).NextDelay(); got != cfg.UpcomingOddsInterval {
-		t.Fatalf("imminent delay=%s want %s", got, cfg.UpcomingOddsInterval)
-	}
-	if got := (PollPlan{Now: now, RecentlyCompleted: true, Config: cfg}).NextDelay(); got != cfg.RecentlyCompleted {
-		t.Fatalf("recent completion delay=%s want %s", got, cfg.RecentlyCompleted)
-	}
-	if got := (PollPlan{Now: now, ProviderBackoff: 20 * time.Minute, Config: cfg}).NextDelay(); got != 20*time.Minute {
-		t.Fatalf("provider backoff delay=%s", got)
+	for _, plan := range []PollPlan{
+		{Now: now, Config: cfg},
+		{Now: now, NextKickoff: now.Add(4 * time.Minute), Config: cfg},
+		{Now: now, RecentlyCompleted: true, ProviderBackoff: 20 * time.Minute, Config: cfg},
+	} {
+		if got := plan.NextDelay(); got != cfg.PollInterval {
+			t.Fatalf("poll delay=%s want %s", got, cfg.PollInterval)
+		}
 	}
 }
 

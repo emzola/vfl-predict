@@ -19,6 +19,7 @@ import (
 // PollConfig follows the conservative defaults in specification section 6.2.
 // The shared ingest.ProviderClient budget remains the final request gate.
 type PollConfig struct {
+	PollInterval            time.Duration
 	SeasonDiscoveryInterval time.Duration
 	FixtureInterval         time.Duration
 	UpcomingOddsInterval    time.Duration
@@ -36,6 +37,7 @@ type PollConfig struct {
 
 func DefaultPollConfig() PollConfig {
 	return PollConfig{
+		PollInterval:            10 * time.Second,
 		SeasonDiscoveryInterval: 5 * time.Minute,
 		FixtureInterval:         2 * time.Minute,
 		UpcomingOddsInterval:    90 * time.Second,
@@ -54,6 +56,9 @@ func DefaultPollConfig() PollConfig {
 
 func (c PollConfig) normalize() PollConfig {
 	defaults := DefaultPollConfig()
+	if c.PollInterval <= 0 {
+		c.PollInterval = defaults.PollInterval
+	}
 	if c.SeasonDiscoveryInterval <= 0 {
 		c.SeasonDiscoveryInterval = defaults.SeasonDiscoveryInterval
 	}
@@ -96,7 +101,10 @@ func (c PollConfig) normalize() PollConfig {
 	return c
 }
 
-// PollPlan is pure scheduling logic so it can be verified without a provider.
+// PollPlan is pure scheduling logic so the fixed monitor cadence can be
+// verified without a provider. The other fields remain on the type for
+// compatibility with existing callers, but the background monitor uses one
+// fixed interval regardless of kickoff timing or provider errors.
 type PollPlan struct {
 	Now               time.Time
 	NextKickoff       time.Time
@@ -107,24 +115,10 @@ type PollPlan struct {
 
 func (p PollPlan) NextDelay() time.Duration {
 	cfg := p.Config.normalize()
-	base := cfg.FutureOddsInterval
-	if p.RecentlyCompleted {
-		base = cfg.RecentlyCompleted
-	} else if !p.NextKickoff.IsZero() {
-		until := p.NextKickoff.Sub(p.Now)
-		if until <= cfg.ImminentWindow {
-			base = cfg.UpcomingOddsInterval
-		} else if until <= 30*time.Minute {
-			base = cfg.FutureOddsInterval
-		}
+	if cfg.PollInterval < time.Second {
+		return time.Second
 	}
-	if p.ProviderBackoff > base {
-		base = p.ProviderBackoff
-	}
-	if base < time.Second {
-		base = time.Second
-	}
-	return base
+	return cfg.PollInterval
 }
 
 type CircuitBreaker struct {
@@ -536,18 +530,13 @@ func (m *Monitor) Run(ctx context.Context) error {
 	if m == nil {
 		return errors.New("live monitor is nil")
 	}
+	pollInterval := m.Config.normalize().PollInterval
 	for {
-		report, err := m.PollOnce(ctx)
+		_, _ = m.PollOnce(ctx)
 		if ctx.Err() != nil {
 			return ctx.Err()
 		}
-		now := m.now()
-		backoff := time.Duration(0)
-		if err != nil {
-			backoff = time.Minute
-		}
-		delay := (PollPlan{Now: now, NextKickoff: report.FirstKickoff, ProviderBackoff: backoff, Config: m.Config}).NextDelay()
-		timer := time.NewTimer(delay)
+		timer := time.NewTimer(pollInterval)
 		select {
 		case <-ctx.Done():
 			timer.Stop()

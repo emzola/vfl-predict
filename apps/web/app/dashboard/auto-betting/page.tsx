@@ -5,6 +5,8 @@ import { apiFetch, csrfToken, errorMessage, formatDate, percentage } from "../..
 import type { AutoBettingState } from "../../../src/lib/types";
 import { ErrorState, FixtureLabel, LoadingState, MetricCard, PageHeading, StatusPill } from "../../../src/components/Ui";
 
+const RECENT_ROUNDS_PAGE_SIZE = 3;
+
 function naira(value?: number) {
   if (typeof value !== "number" || Number.isNaN(value)) return "—";
   return new Intl.NumberFormat(undefined, { style: "currency", currency: "NGN", maximumFractionDigits: 2 }).format(value);
@@ -20,6 +22,7 @@ export default function AutoBettingPage() {
   const [error, setError] = useState("");
   const [saved, setSaved] = useState("");
   const [credentialsSaved, setCredentialsSaved] = useState("");
+  const [recentRoundsPage, setRecentRoundsPage] = useState(1);
   const refreshInFlight = useRef(false);
 
   const load = useCallback(async () => {
@@ -44,6 +47,11 @@ export default function AutoBettingPage() {
     const timer = window.setInterval(() => void load(), 30000);
     return () => window.clearInterval(timer);
   }, [load]);
+
+  useEffect(() => {
+    const pageCount = Math.max(1, Math.ceil((data?.recent_rounds.length || 0) / RECENT_ROUNDS_PAGE_SIZE));
+    setRecentRoundsPage((page) => Math.min(page, pageCount));
+  }, [data?.recent_rounds.length]);
 
   async function save() {
     setSaved("");
@@ -88,6 +96,12 @@ export default function AutoBettingPage() {
 
   const summary = data.season_summary;
   const candidate = data.next_candidate;
+  const recentRoundsPageCount = Math.max(1, Math.ceil(data.recent_rounds.length / RECENT_ROUNDS_PAGE_SIZE));
+  const visibleRecentRoundsPage = Math.min(recentRoundsPage, recentRoundsPageCount);
+  const visibleRecentRounds = data.recent_rounds.slice(
+    (visibleRecentRoundsPage - 1) * RECENT_ROUNDS_PAGE_SIZE,
+    visibleRecentRoundsPage * RECENT_ROUNDS_PAGE_SIZE,
+  );
 
   return (
     <>
@@ -273,7 +287,7 @@ export default function AutoBettingPage() {
         <p className="eyebrow">Recent round decisions</p>
         {data.recent_rounds.length === 0 ? <p className="mt-4 text-sm text-slate-400">No auto betting decisions have been recorded yet.</p> : (
           <div className="mt-4 space-y-3">
-            {data.recent_rounds.map((item) => (
+            {visibleRecentRounds.map((item) => (
               <div key={item.season_id + ":" + item.round + ":" + item.created_at} className="rounded-xl border border-slate-800 bg-slate-950/20 p-4">
                 <div className="flex flex-wrap items-start justify-between gap-3">
                   <div>
@@ -293,6 +307,25 @@ export default function AutoBettingPage() {
                 {(item.placed_at || item.settled_at) && <p className="mt-2 text-xs text-slate-500">Placed {formatDate(item.placed_at)} · Settled {formatDate(item.settled_at)}</p>}
               </div>
             ))}
+            {recentRoundsPageCount > 1 && <div className="flex items-center justify-between gap-3 border-t border-slate-800 pt-4">
+              <button
+                type="button"
+                onClick={() => setRecentRoundsPage((page) => Math.max(1, page - 1))}
+                disabled={visibleRecentRoundsPage === 1}
+                className="rounded-lg border border-slate-700 px-3 py-2 text-xs font-semibold text-slate-200 transition hover:border-slate-500 disabled:cursor-not-allowed disabled:opacity-40"
+              >
+                Previous
+              </button>
+              <span className="text-xs text-slate-500">Page {visibleRecentRoundsPage} of {recentRoundsPageCount}</span>
+              <button
+                type="button"
+                onClick={() => setRecentRoundsPage((page) => Math.min(recentRoundsPageCount, page + 1))}
+                disabled={visibleRecentRoundsPage === recentRoundsPageCount}
+                className="rounded-lg border border-slate-700 px-3 py-2 text-xs font-semibold text-slate-200 transition hover:border-slate-500 disabled:cursor-not-allowed disabled:opacity-40"
+              >
+                Next
+              </button>
+            </div>}
           </div>
         )}
       </section>

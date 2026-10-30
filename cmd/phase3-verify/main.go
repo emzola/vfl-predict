@@ -54,7 +54,7 @@ func checkPollPlan() verification {
 	cfg := live.DefaultPollConfig()
 	now := time.Date(2026, 10, 25, 12, 0, 0, 0, time.UTC)
 	got := (live.PollPlan{Now: now, NextKickoff: now.Add(4 * time.Minute), Config: cfg}).NextDelay()
-	return verification{"adaptive_poll_plan", got == cfg.UpcomingOddsInterval, fmt.Sprintf("delay=%s", got)}
+	return verification{"fixed_poll_interval", got == cfg.PollInterval, fmt.Sprintf("delay=%s", got)}
 }
 
 func checkProbability() verification {
