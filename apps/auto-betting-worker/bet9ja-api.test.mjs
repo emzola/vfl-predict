@@ -138,10 +138,12 @@ test("session validation rejection is classified as authentication failure", asy
   });
   await client.login({ username: "user", password: "password" });
   await assert.rejects(
-    () => client.placeBet([{ version: "2.2" }]),
+    () => client.placeBet([{ version: "2.2", sender: { endCustomer: { id: "session-1" } } }]),
     (error) => {
       assert.ok(error instanceof Bet9jaAuthError);
       assert.match(error.message, /REJECTED_SESSION_VALIDATION: Session does not exist\./);
+      assert.match(error.message, /ticket URL session ID: session-1/);
+      assert.match(error.message, /payload endCustomer\.id: session-1/);
       return true;
     },
   );
