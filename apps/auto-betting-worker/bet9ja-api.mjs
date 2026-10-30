@@ -193,6 +193,39 @@ export class Bet9jaApiClient {
     return `${this.ticketsBaseURL}/${encodeURIComponent(String(this.bookmakerID))}/users/${encodeURIComponent(this.sessionID)}/tickets?key=${encodeURIComponent(this.apiKey)}`;
   }
 
+  get ticketServiceOrigin() {
+    try {
+      return new URL(this.ticketsBaseURL).origin;
+    } catch {
+      return "";
+    }
+  }
+
+  get bookmakerConfigURL() {
+    if (!this.apiKey || !Number.isFinite(Number(this.bookmakerID))) return "";
+    return `${this.ticketsBaseURL}/${encodeURIComponent(String(this.bookmakerID))}?key=${encodeURIComponent(this.apiKey)}`;
+  }
+
+  get helloURL() {
+    if (!this.ticketServiceOrigin || !this.sessionID || !this.apiKey || !Number.isFinite(Number(this.bookmakerID))) return "";
+    const query = new URLSearchParams({
+      key: this.apiKey,
+      bkId: String(this.bookmakerID),
+      token: this.sessionID,
+    });
+    return `${this.ticketServiceOrigin}/betting-rest/hello?${query}`;
+  }
+
+  get registerURL() {
+    if (!this.ticketServiceOrigin || !this.sessionID || !this.apiKey) return "";
+    const query = new URLSearchParams({
+      key: this.apiKey,
+      id: this.sessionID,
+      currency: "ngn",
+    });
+    return `${this.ticketServiceOrigin}/auth-generic/register?${query}`;
+  }
+
   credentialsMatch(credentials) {
     return Boolean(
       this.credentials &&
@@ -246,20 +279,44 @@ export class Bet9jaApiClient {
     let initPayload;
     try {
       initPayload = await this.getGames();
+      const sessionID = extractSessionID(initPayload);
+      if (!sessionID) {
+        throw new Bet9jaAuthError("Bet9ja getGames returned no session id in data.games after login.");
+      }
+      this.sessionID = sessionID;
+      await this.bootstrapTicketSession();
     } catch (error) {
       this.clearSession();
       throw error;
     }
-    const sessionID = extractSessionID(initPayload);
-    if (!sessionID) {
-      this.clearSession();
-      throw new Bet9jaAuthError("Bet9ja getGames returned no session id in data.games after login.");
-    }
-    this.sessionID = sessionID;
     this.credentials = { username: String(credentials.username), password: String(credentials.password) };
     this.authenticated = true;
     this.lastLoginAt = new Date().toISOString();
     return { login: result.payload, init: initPayload };
+  }
+
+  async bootstrapTicketSession() {
+    const requests = [
+      ["bookmaker bootstrap", this.bookmakerConfigURL],
+      ["hello handshake", this.helloURL],
+      ["session registration", this.registerURL],
+    ];
+    for (const [name, url] of requests) {
+      if (!url) {
+        throw new Bet9jaConfigurationError(`Bet9ja ${name} URL cannot be constructed from the current provider settings.`);
+      }
+      const result = await this.request(url, {
+        method: "GET",
+        headers: this.ticketBootstrapHeaders(),
+      });
+      if (!result.response.ok) {
+        throw new Bet9jaAuthError(`Bet9ja ${name} failed with HTTP ${result.response.status}.`);
+      }
+      if (isAuthenticationFailure(result.payload, result.response.status)) {
+        const providerError = providerMessage(result.payload);
+        throw new Bet9jaAuthError(`Bet9ja ${name} rejected the session.${providerError ? ` Provider response: ${providerError}` : ""}`);
+      }
+    }
   }
 
   async getGames() {
@@ -382,6 +439,15 @@ export class Bet9jaApiClient {
   ticketRequestHeaders(extra = {}) {
     return {
       Accept: "*/*",
+      Origin: this.ticketOrigin,
+      Referer: this.ticketReferer,
+      ...extra,
+    };
+  }
+
+  ticketBootstrapHeaders(extra = {}) {
+    return {
+      Accept: "application/json",
       Origin: this.ticketOrigin,
       Referer: this.ticketReferer,
       ...extra,

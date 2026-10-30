@@ -53,6 +53,7 @@ test("Bet9jaApiClient uses the getGames session ID and matches ticket request he
     requests.push({
       method: init.method || "GET",
       path: parsed.pathname,
+      query: Object.fromEntries(parsed.searchParams),
       cookie: headers.get("Cookie") || "",
       origin: headers.get("Origin") || "",
       referer: headers.get("Referer") || "",
@@ -67,6 +68,12 @@ test("Bet9jaApiClient uses the getGames session ID and matches ticket request he
     }
     if (parsed.pathname === "/getGames") {
       return new Response(JSON.stringify({ status: 1, data: { games: "https://vgcommon.aitcloud.de/srvg-launcher/stable/bwg.html?clientId=1205&id=session-1&lang=en&product=vfb&refId=&timeZone=Africa:Lagos" } }), {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      });
+    }
+    if (["/bookmakers/9478", "/betting-rest/hello", "/auth-generic/register"].includes(parsed.pathname)) {
+      return new Response(JSON.stringify({ status: 1 }), {
         status: 200,
         headers: { "content-type": "application/json" },
       });
@@ -103,16 +110,30 @@ test("Bet9jaApiClient uses the getGames session ID and matches ticket request he
   assert.equal(requests[1].origin, "");
   assert.equal(requests[1].referer, "https://virtual.bet9ja.com/virtual/");
   assert.equal(requests[1].accept, "*/*");
-  assert.equal(requests[2].path.includes("/users/session-1/tickets"), true);
-  assert.equal(requests[2].cookie, "");
-  assert.equal(requests[2].origin, "https://launcherlive-vs001.akamaized.net");
-  assert.equal(requests[2].referer, "https://launcherlive-vs001.akamaized.net/");
-  assert.equal(requests[2].accept, "*/*");
+  assert.deepEqual(requests.slice(2, 5).map(({ method, path }) => [method, path]), [
+    ["GET", "/bookmakers/9478"],
+    ["GET", "/betting-rest/hello"],
+    ["GET", "/auth-generic/register"],
+  ]);
+  for (const request of requests.slice(2, 5)) {
+    assert.equal(request.cookie, "");
+    assert.equal(request.origin, "https://launcherlive-vs001.akamaized.net");
+    assert.equal(request.referer, "https://launcherlive-vs001.akamaized.net/");
+    assert.equal(request.accept, "application/json");
+  }
+  assert.deepEqual(requests[2].query, { key: "test-key" });
+  assert.deepEqual(requests[3].query, { key: "test-key", bkId: "9478", token: "session-1" });
+  assert.deepEqual(requests[4].query, { key: "test-key", id: "session-1", currency: "ngn" });
+  assert.equal(requests[5].path.includes("/users/session-1/tickets"), true);
+  assert.equal(requests[5].cookie, "");
+  assert.equal(requests[5].origin, "https://launcherlive-vs001.akamaized.net");
+  assert.equal(requests[5].referer, "https://launcherlive-vs001.akamaized.net/");
+  assert.equal(requests[5].accept, "*/*");
   await client.logout();
-  assert.equal(requests[3].path.includes("/users/session-1/tickets"), true);
-  assert.equal(requests[3].cookie, "");
-  assert.equal(requests[3].origin, "https://launcherlive-vs001.akamaized.net");
-  assert.equal(requests[3].referer, "https://launcherlive-vs001.akamaized.net/");
+  assert.equal(requests[6].path.includes("/users/session-1/tickets"), true);
+  assert.equal(requests[6].cookie, "");
+  assert.equal(requests[6].origin, "https://launcherlive-vs001.akamaized.net");
+  assert.equal(requests[6].referer, "https://launcherlive-vs001.akamaized.net/");
   assert.equal(client.authenticated, false);
 });
 
@@ -127,6 +148,9 @@ test("session validation rejection is classified as authentication failure", asy
         status: 1,
         data: { games: "https://vgcommon.aitcloud.de/srvg-launcher/stable/bwg.html?id=session-1" },
       }), { status: 200 });
+    }
+    if (["/bookmakers/9478", "/betting-rest/hello", "/auth-generic/register"].includes(parsed.pathname)) {
+      return new Response(JSON.stringify({ status: 1 }), { status: 200 });
     }
     return new Response(JSON.stringify({
       errors: [{ message: "REJECTED_SESSION_VALIDATION: Session does not exist." }],
@@ -164,6 +188,9 @@ test("an explicit provider auth response becomes a safe re-login signal", async 
         status: 1,
         data: { games: "https://vgcommon.aitcloud.de/srvg-launcher/stable/bwg.html?id=session-1" },
       }), { status: 200 });
+    }
+    if (["/bookmakers/9478", "/betting-rest/hello", "/auth-generic/register"].includes(parsed.pathname)) {
+      return new Response(JSON.stringify({ status: 1 }), { status: 200 });
     }
     return new Response(JSON.stringify({ status: -1, data: { auth: { status: -1 } } }), { status: 200 });
   };
