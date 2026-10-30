@@ -315,7 +315,11 @@ export class Bet9jaApiClient {
 
     if (isAuthenticationFailure(result.payload, result.response.status)) {
       this.authenticated = false;
-      throw new Bet9jaAuthError("Bet9ja rejected the betting session as expired or unauthenticated.");
+      const providerError = providerMessage(result.payload);
+      const detail = providerError
+        ? ` Provider response: ${providerError}`
+        : ` Provider HTTP status: ${result.response.status}.`;
+      throw new Bet9jaAuthError(`Bet9ja rejected the betting session as expired or unauthenticated.${detail}`);
     }
     if (!result.response.ok) {
       throw new Bet9jaAmbiguousError(`Bet9ja returned HTTP ${result.response.status} after the bet request.`);

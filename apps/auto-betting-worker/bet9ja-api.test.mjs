@@ -118,7 +118,14 @@ test("session validation rejection is classified as authentication failure", asy
     fetchImpl,
   });
   await client.login({ username: "user", password: "password" });
-  await assert.rejects(() => client.placeBet([{ version: "2.2" }]), Bet9jaAuthError);
+  await assert.rejects(
+    () => client.placeBet([{ version: "2.2" }]),
+    (error) => {
+      assert.ok(error instanceof Bet9jaAuthError);
+      assert.match(error.message, /REJECTED_SESSION_VALIDATION: Session does not exist\./);
+      return true;
+    },
+  );
   assert.equal(client.authenticated, false);
 });
 
