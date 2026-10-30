@@ -220,7 +220,7 @@ export class Bet9jaApiClient {
       username: String(credentials.username),
       password: String(credentials.password),
     });
-    const result = await this.request(this.loginURL, {
+    const sendLogin = () => this.request(this.loginURL, {
       method: "POST",
       headers: {
         "Content-Type": "application/x-www-form-urlencoded",
@@ -230,16 +230,28 @@ export class Bet9jaApiClient {
       },
       body: form.toString(),
     });
-    if (!result.response.ok) {
-      throw new Bet9jaAuthError(`Bet9ja login failed with HTTP ${result.response.status}.`);
+    const validateLogin = (result) => {
+      if (!result.response.ok) {
+        throw new Bet9jaAuthError(`Bet9ja login failed with HTTP ${result.response.status}.`);
+      }
+      if (!loginSucceeded(result.payload)) {
+        throw new Bet9jaAuthError(`Bet9ja login was rejected: ${providerMessage(result.payload) || "invalid credentials"}.`);
+      }
+    };
+
+    let result = await sendLogin();
+    validateLogin(result);
+    let sessionID = extractSessionID(result.payload);
+    if (!sessionID) {
+      // Bet9ja can return a successful login with a null or deleted session on
+      // the first call. Retry once while preserving the cookies from that call.
+      result = await sendLogin();
+      validateLogin(result);
+      sessionID = extractSessionID(result.payload);
     }
-    if (!loginSucceeded(result.payload)) {
-      throw new Bet9jaAuthError(`Bet9ja login was rejected: ${providerMessage(result.payload) || "invalid credentials"}.`);
-    }
-    const sessionID = extractSessionID(result.payload);
     if (!sessionID) {
       this.clearSession();
-      throw new Bet9jaAuthError("Bet9ja login returned no session id after successful login.");
+      throw new Bet9jaAuthError("Bet9ja login returned no valid session id after two attempts.");
     }
     this.sessionID = sessionID;
     this.credentials = { username: String(credentials.username), password: String(credentials.password) };
@@ -499,7 +511,8 @@ function loginSucceeded(payload) {
 }
 
 function extractSessionID(payload) {
-  return String(payload?.data?.auth?.data?.sessionId || "").trim();
+  const sessionID = String(payload?.data?.auth?.data?.sessionId || "").trim();
+  return sessionID && sessionID.toLowerCase() !== "deleted" ? sessionID : "";
 }
 
 function isAuthenticationFailure(payload, status) {

@@ -104,6 +104,37 @@ test("Bet9jaApiClient uses the login session ID and matches ticket request heade
   assert.equal(client.authenticated, false);
 });
 
+test("Bet9jaApiClient retries login when the first session ID is deleted", async () => {
+  let loginCalls = 0;
+  const fetchImpl = async (url, init = {}) => {
+    const parsed = new URL(url);
+    if (parsed.pathname === "/login") {
+      loginCalls += 1;
+      const sessionId = loginCalls === 1 ? "deleted" : "session-2";
+      return new Response(JSON.stringify({ status: 1, data: { auth: { status: 1, data: { sessionId } } } }), {
+        status: 200,
+        headers: { "content-type": "application/json", "set-cookie": `sid=${loginCalls}; Path=/; HttpOnly` },
+      });
+    }
+    return new Response(JSON.stringify({
+      data: [[{ ticketId: "ticket-2", ticketStatus: "accepted", code: 0, message: "PLACED" }]],
+      errors: [],
+      statusCode: 0,
+    }), { status: 200, headers: { "content-type": "application/json" } });
+  };
+  const client = new Bet9jaApiClient({
+    loginURL: "https://virtual.test/login",
+    ticketsBaseURL: "https://akamai.test/bookmakers",
+    bookmakerID: 9478,
+    apiKey: "test-key",
+    fetchImpl,
+  });
+  await client.login({ username: "user", password: "password" });
+  assert.equal(loginCalls, 2);
+  assert.equal(client.sessionID, "session-2");
+  assert.equal(client.authenticated, true);
+});
+
 test("session validation rejection is classified as authentication failure", async () => {
   const fetchImpl = async (url, init = {}) => {
     if (init.method === "POST" && String(init.body).includes("username")) {
