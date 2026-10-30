@@ -142,6 +142,19 @@ export class CookieJar {
     this.cookies.clear();
   }
 
+  allHeader() {
+    const now = Date.now();
+    const values = [];
+    for (const [key, cookie] of this.cookies) {
+      if (cookie.expiresAt !== null && cookie.expiresAt <= now) {
+        this.cookies.delete(key);
+        continue;
+      }
+      values.push(`${cookie.name}=${cookie.value}`);
+    }
+    return values.join("; ");
+  }
+
   get size() {
     return this.cookies.size;
   }
@@ -169,6 +182,7 @@ export class Bet9jaApiClient {
     this.authenticated = false;
     this.credentials = null;
     this.lastLoginAt = null;
+    this.loginCookieHeader = "";
   }
 
   get ticketsURL() {
@@ -188,6 +202,7 @@ export class Bet9jaApiClient {
   clearSession() {
     this.authenticated = false;
     this.cookieJar.clear();
+    this.loginCookieHeader = "";
   }
 
   async ensureLoggedIn(credentials) {
@@ -225,6 +240,9 @@ export class Bet9jaApiClient {
     this.credentials = { username: String(credentials.username), password: String(credentials.password) };
     this.authenticated = true;
     this.lastLoginAt = new Date().toISOString();
+    // The login and ticket endpoints use different hostnames. Bridge the
+    // authenticated login cookies explicitly to the documented ticket endpoint.
+    this.loginCookieHeader = this.cookieJar.allHeader();
     return result.payload;
   }
 
@@ -298,7 +316,10 @@ export class Bet9jaApiClient {
     }
     const headers = new Headers(init.headers || {});
     if (!headers.has("Accept")) headers.set("Accept", "application/json");
-    const cookie = this.cookieJar.headerFor(url);
+    const cookie = mergeCookieHeaders(
+      this.cookieJar.headerFor(url),
+      url === this.loginURL ? "" : this.loginCookieHeader,
+    );
     if (cookie) headers.set("Cookie", cookie);
 
     const controller = new AbortController();
@@ -469,7 +490,7 @@ function isAuthenticationFailure(payload, status) {
     .map(Number);
   if (authStatuses.some((value) => value === -1)) return true;
   const message = JSON.stringify(payload).toLowerCase();
-  return /unauthori[sz]ed|authentication\s+(?:required|failed)|login\s+required|session\s+(?:expired|invalid|not\s+found)|not\s+logged\s+in/.test(message);
+  return /rejected_session_validation|unauthori[sz]ed|authentication\s+(?:required|failed)|login\s+required|session\s+(?:expired|invalid|not\s+found|does\s+not\s+exist)|not\s+logged\s+in/.test(message);
 }
 
 function providerMessage(payload) {
@@ -517,5 +538,18 @@ function defaultCookiePath(pathname) {
 
 function splitSetCookieHeader(value) {
   return String(value).split(/,(?=[^;,=]+=[^;,]+)/g).map((item) => item.trim()).filter(Boolean);
+}
+
+function mergeCookieHeaders(...headers) {
+  const cookies = new Map();
+  for (const header of headers) {
+    for (const item of String(header || "").split(";")) {
+      const value = item.trim();
+      const separator = value.indexOf("=");
+      if (separator <= 0) continue;
+      cookies.set(value.slice(0, separator), value.slice(separator + 1));
+    }
+  }
+  return [...cookies].map(([name, value]) => `${name}=${value}`).join("; ");
 }
 

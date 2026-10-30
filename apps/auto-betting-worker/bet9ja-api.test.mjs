@@ -69,8 +69,8 @@ test("Bet9jaApiClient reuses login cookies and parses an accepted ticket", async
   };
 
   const client = new Bet9jaApiClient({
-    loginURL: "https://tickets.test/login",
-    ticketsBaseURL: "https://tickets.test/bookmakers",
+    loginURL: "https://virtual.test/login",
+    ticketsBaseURL: "https://akamai.test/bookmakers",
     bookmakerID: 9478,
     userID: "test-user",
     apiKey: "test-key",
@@ -82,6 +82,29 @@ test("Bet9jaApiClient reuses login cookies and parses an accepted ticket", async
   await client.logout();
   assert.equal(requests[1].cookie, "sid=abc");
   assert.equal(requests[2].cookie, "sid=abc");
+  assert.equal(client.authenticated, false);
+});
+
+test("session validation rejection is classified as authentication failure", async () => {
+  const fetchImpl = async (_url, init = {}) => {
+    if (init.method === "POST" && String(init.body).includes("username")) {
+      return new Response(JSON.stringify({ status: 1, data: { auth: { status: 1 } } }), { status: 200 });
+    }
+    return new Response(JSON.stringify({
+      errors: [{ message: "REJECTED_SESSION_VALIDATION: Session does not exist." }],
+      statusCode: 1,
+    }), { status: 200 });
+  };
+  const client = new Bet9jaApiClient({
+    loginURL: "https://virtual.test/login",
+    ticketsBaseURL: "https://akamai.test/bookmakers",
+    bookmakerID: 9478,
+    userID: "test-user",
+    apiKey: "test-key",
+    fetchImpl,
+  });
+  await client.login({ username: "user", password: "password" });
+  await assert.rejects(() => client.placeBet([{ version: "2.2" }]), Bet9jaAuthError);
   assert.equal(client.authenticated, false);
 });
 
