@@ -1,7 +1,9 @@
 const DEFAULT_LOGIN_URL = "https://virtual.bet9ja.com/commonmenu/CommonDesktopMenu/login";
+const DEFAULT_INIT_URL = "https://virtual.bet9ja.com/betradardesktopmenu/IntegrationBetradar/getGames";
 const DEFAULT_TICKETS_BASE_URL = "https://rgspluslive-vs001.akamaized.net/betting-rest/bookmakers";
 const DEFAULT_AUTH_ORIGIN = "https://virtual.bet9ja.com";
 const DEFAULT_AUTH_REFERER = `${DEFAULT_AUTH_ORIGIN}/virtual/?s=new`;
+const DEFAULT_INIT_REFERER = `${DEFAULT_AUTH_ORIGIN}/virtual/`;
 const DEFAULT_TICKET_ORIGIN = "https://launcherlive-vs001.akamaized.net";
 const DEFAULT_TICKET_REFERER = `${DEFAULT_TICKET_ORIGIN}/`;
 
@@ -154,9 +156,11 @@ export class CookieJar {
 export class Bet9jaApiClient {
   constructor({
     loginURL = DEFAULT_LOGIN_URL,
+    initURL = DEFAULT_INIT_URL,
     ticketsBaseURL = DEFAULT_TICKETS_BASE_URL,
     authOrigin = DEFAULT_AUTH_ORIGIN,
     authReferer = DEFAULT_AUTH_REFERER,
+    initReferer = DEFAULT_INIT_REFERER,
     ticketOrigin = DEFAULT_TICKET_ORIGIN,
     ticketReferer = DEFAULT_TICKET_REFERER,
     bookmakerID,
@@ -166,9 +170,11 @@ export class Bet9jaApiClient {
     cookieJar = new CookieJar(),
   } = {}) {
     this.loginURL = loginURL;
+    this.initURL = initURL;
     this.ticketsBaseURL = ticketsBaseURL.replace(/\/+$/, "");
     this.authOrigin = String(authOrigin || DEFAULT_AUTH_ORIGIN).trim();
     this.authReferer = String(authReferer || `${this.authOrigin}/virtual/?s=new`).trim();
+    this.initReferer = String(initReferer || `${this.authOrigin}/virtual/`).trim();
     this.ticketOrigin = String(ticketOrigin || DEFAULT_TICKET_ORIGIN).trim();
     this.ticketReferer = String(ticketReferer || `${this.ticketOrigin}/`).trim();
     this.bookmakerID = bookmakerID;
@@ -220,7 +226,7 @@ export class Bet9jaApiClient {
       username: String(credentials.username),
       password: String(credentials.password),
     });
-    const sendLogin = () => this.request(this.loginURL, {
+    const result = await this.request(this.loginURL, {
       method: "POST",
       headers: {
         "Content-Type": "application/x-www-form-urlencoded",
@@ -230,34 +236,47 @@ export class Bet9jaApiClient {
       },
       body: form.toString(),
     });
-    const validateLogin = (result) => {
-      if (!result.response.ok) {
-        throw new Bet9jaAuthError(`Bet9ja login failed with HTTP ${result.response.status}.`);
-      }
-      if (!loginSucceeded(result.payload)) {
-        throw new Bet9jaAuthError(`Bet9ja login was rejected: ${providerMessage(result.payload) || "invalid credentials"}.`);
-      }
-    };
-
-    let result = await sendLogin();
-    validateLogin(result);
-    let sessionID = extractSessionID(result.payload);
-    if (!sessionID) {
-      // Bet9ja can return a successful login with a null or deleted session on
-      // the first call. Retry once while preserving the cookies from that call.
-      result = await sendLogin();
-      validateLogin(result);
-      sessionID = extractSessionID(result.payload);
+    if (!result.response.ok) {
+      throw new Bet9jaAuthError(`Bet9ja login failed with HTTP ${result.response.status}.`);
     }
+    if (!loginSucceeded(result.payload)) {
+      throw new Bet9jaAuthError(`Bet9ja login was rejected: ${providerMessage(result.payload) || "invalid credentials"}.`);
+    }
+
+    let initPayload;
+    try {
+      initPayload = await this.getGames();
+    } catch (error) {
+      this.clearSession();
+      throw error;
+    }
+    const sessionID = extractSessionID(initPayload);
     if (!sessionID) {
       this.clearSession();
-      throw new Bet9jaAuthError("Bet9ja login returned no valid session id after two attempts.");
+      throw new Bet9jaAuthError("Bet9ja getGames returned no session id in data.games after login.");
     }
     this.sessionID = sessionID;
     this.credentials = { username: String(credentials.username), password: String(credentials.password) };
     this.authenticated = true;
     this.lastLoginAt = new Date().toISOString();
-    return { login: result.payload };
+    return { login: result.payload, init: initPayload };
+  }
+
+  async getGames() {
+    const result = await this.request(this.initURL, {
+      method: "GET",
+      headers: {
+        Accept: "*/*",
+        Referer: this.initReferer,
+      },
+    });
+    if (!result.response.ok) {
+      throw new Bet9jaAuthError(`Bet9ja getGames failed with HTTP ${result.response.status}.`);
+    }
+    if (!loginSucceeded(result.payload)) {
+      throw new Bet9jaAuthError(`Bet9ja getGames rejected the session: ${providerMessage(result.payload) || "authentication failed"}.`);
+    }
+    return result.payload;
   }
 
   async logout() {
@@ -511,8 +530,13 @@ function loginSucceeded(payload) {
 }
 
 function extractSessionID(payload) {
-  const sessionID = String(payload?.data?.auth?.data?.sessionId || "").trim();
-  return sessionID && sessionID.toLowerCase() !== "deleted" ? sessionID : "";
+  const gamesURL = String(payload?.data?.games || "").trim();
+  if (!gamesURL) return "";
+  try {
+    return String(new URL(gamesURL).searchParams.get("id") || "").trim();
+  } catch {
+    return "";
+  }
 }
 
 function isAuthenticationFailure(payload, status) {

@@ -28,6 +28,7 @@ const oddsScale = numberEnv("BET9JA_ODDS_SCALE", 10000, 1);
 
 const provider = new Bet9jaApiClient({
   loginURL: process.env.BET9JA_LOGIN_URL || "https://virtual.bet9ja.com/commonmenu/CommonDesktopMenu/login",
+  initURL: process.env.BET9JA_INIT_URL || "https://virtual.bet9ja.com/betradardesktopmenu/IntegrationBetradar/getGames",
   ticketsBaseURL: process.env.BET9JA_TICKETS_BASE_URL || "https://rgspluslive-vs001.akamaized.net/betting-rest/bookmakers",
   bookmakerID,
   apiKey,
