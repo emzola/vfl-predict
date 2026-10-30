@@ -416,7 +416,9 @@ export function buildBetPayload(candidate, selection, {
   const awayProviderID = String(selection.away_team_provider_id || `sr:competitor:${awayUID}`);
   const round = Number(candidate.round);
   const outcome = String(outcomeName || selection.outcome_name || "over 1.5");
-  const tournamentName = `Season ${String(candidate.season_id)}`;
+  const seasonYear = String(selection.season_year || "").trim();
+  if (!seasonYear) throw new Bet9jaConfigurationError("The current season provider year is required to place a bet.");
+  const tournamentName = `Season ${seasonYear}`;
   const eventName = `Matchday ${Number.isInteger(round) && round > 0 ? round : ""}`.trim();
 
   return [{

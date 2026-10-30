@@ -144,6 +144,7 @@ type WorkerTask struct {
 // dashboard responses use DashboardState and therefore never expose it.
 type BetSelection struct {
 	MatchID              int64     `json:"match_id"`
+	SeasonYear           string    `json:"season_year"`
 	HomeTeamUID          int64     `json:"home_team_uid"`
 	HomeTeamProviderID   string    `json:"home_team_provider_id"`
 	HomeTeamAbbreviation string    `json:"home_team_abbreviation"`
@@ -460,12 +461,14 @@ func (s *Service) loadBetSelection(ctx context.Context, matchID int64) (*BetSele
 	var selection BetSelection
 	err := s.DB.QueryRowContext(ctx, `
 SELECT f.match_id,
+       COALESCE(s.provider_year, ''),
        f.home_team_uid, CONCAT('sr:competitor:', f.home_team_uid), COALESCE(ht.abbreviation, ''),
        f.away_team_uid, CONCAT('sr:competitor:', f.away_team_uid), COALESCE(at.abbreviation, ''),
        o.provider_market_id, md.market_name, o.specifiers, o.outcome_id,
        o.outcome_name, o.raw_odds, o.decimal_odds::double precision,
        o.market_status, o.outcome_active, o.source_timestamp_at, o.last_observed_at
 FROM fixtures f
+JOIN seasons s ON s.season_id = f.season_id
 JOIN teams ht ON ht.team_uid = f.home_team_uid
 JOIN teams at ON at.team_uid = f.away_team_uid
 JOIN odds_snapshots o ON o.match_id = f.match_id
@@ -482,6 +485,7 @@ WHERE f.match_id = $1
 ORDER BY o.last_observed_at DESC, o.source_timestamp_at DESC, o.odds_snapshot_id DESC
 LIMIT 1`, matchID).Scan(
 		&selection.MatchID,
+		&selection.SeasonYear,
 		&selection.HomeTeamUID, &selection.HomeTeamProviderID, &selection.HomeTeamAbbreviation,
 		&selection.AwayTeamUID, &selection.AwayTeamProviderID, &selection.AwayTeamAbbreviation,
 		&selection.MarketID, &selection.MarketName, &selection.Specifiers, &selection.OutcomeID,

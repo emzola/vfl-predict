@@ -19,6 +19,7 @@ const candidate = {
 
 const selection = {
   match_id: candidate.match_id,
+  season_year: "2026",
   home_team_uid: 276504,
   home_team_provider_id: "sr:competitor:276504",
   home_team_abbreviation: "VIE",
@@ -40,6 +41,7 @@ test("buildBetPayload converts the documented ticket units and metadata", () => 
   assert.equal(payload[0].selections[0].odds, 14000);
   assert.equal(payload[0].selections[0].convertedOdds, "1.40");
   assert.equal(payload[0].bets[0].stake.value, "500000");
+  assert.equal(payload[0].selections[0].metaData.tournament.name, "Season 2026");
   assert.equal(payload[0].selections[0].metaData.tournament.event.competitors[0].id, "sr:competitor:276504");
 });
 
