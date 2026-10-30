@@ -1,5 +1,5 @@
 const DEFAULT_LOGIN_URL = "https://virtual.bet9ja.com/commonmenu/CommonDesktopMenu/login";
-const DEFAULT_INIT_URL = "https://virtual.bet9ja.com/commonmenu/CommonDesktopMenu/getinit";
+const DEFAULT_INIT_URL = "https://virtual.bet9ja.com/betradardesktopmenu/IntegrationBetradar/getGames";
 const DEFAULT_TICKETS_BASE_URL = "https://rgspluslive-vs001.akamaized.net/betting-rest/bookmakers";
 const DEFAULT_AUTH_ORIGIN = "https://virtual.bet9ja.com";
 const DEFAULT_AUTH_REFERER = `${DEFAULT_AUTH_ORIGIN}/virtual/?s=new`;
@@ -241,7 +241,7 @@ export class Bet9jaApiClient {
     }
     let initPayload;
     try {
-      initPayload = await this.getInit();
+      initPayload = await this.getGames();
     } catch (error) {
       this.clearSession();
       throw error;
@@ -249,7 +249,7 @@ export class Bet9jaApiClient {
     const sessionID = extractSessionID(initPayload);
     if (!sessionID) {
       this.clearSession();
-      throw new Bet9jaAuthError("Bet9ja getInit returned no session id after login.");
+      throw new Bet9jaAuthError("Bet9ja getGames returned no session id in data.games after login.");
     }
     this.sessionID = sessionID;
     this.credentials = { username: String(credentials.username), password: String(credentials.password) };
@@ -258,7 +258,7 @@ export class Bet9jaApiClient {
     return { login: result.payload, init: initPayload };
   }
 
-  async getInit() {
+  async getGames() {
     const result = await this.request(this.initURL, {
       method: "GET",
       headers: {
@@ -267,10 +267,10 @@ export class Bet9jaApiClient {
       },
     });
     if (!result.response.ok) {
-      throw new Bet9jaAuthError(`Bet9ja getInit failed with HTTP ${result.response.status}.`);
+      throw new Bet9jaAuthError(`Bet9ja getGames failed with HTTP ${result.response.status}.`);
     }
     if (!loginSucceeded(result.payload)) {
-      throw new Bet9jaAuthError(`Bet9ja getInit rejected the session: ${providerMessage(result.payload) || "authentication failed"}.`);
+      throw new Bet9jaAuthError(`Bet9ja getGames rejected the session: ${providerMessage(result.payload) || "authentication failed"}.`);
     }
     return result.payload;
   }
@@ -321,16 +321,7 @@ export class Bet9jaApiClient {
       const detail = providerError
         ? ` Provider response: ${providerError}`
         : ` Provider HTTP status: ${result.response.status}.`;
-      // TEMPORARY DEBUG: expose both ticket-session values in the dashboard
-      // error so production can confirm they are identical. Remove after the
-      // session handoff check is complete.
-      const ticketURLSessionID = String(this.sessionID || "<missing>");
-      const payloadSessionID = String(payload?.[0]?.sender?.endCustomer?.id || "<missing>");
-      throw new Bet9jaAuthError(
-        `Bet9ja rejected the betting session as expired or unauthenticated.${detail} `
-        + `TEMP SESSION CHECK — ticket URL session ID: ${ticketURLSessionID}; `
-        + `payload endCustomer.id: ${payloadSessionID}.`,
-      );
+      throw new Bet9jaAuthError(`Bet9ja rejected the betting session as expired or unauthenticated.${detail}`);
     }
     if (!result.response.ok) {
       throw new Bet9jaAmbiguousError(`Bet9ja returned HTTP ${result.response.status} after the bet request.`);
@@ -535,7 +526,13 @@ function loginSucceeded(payload) {
 }
 
 function extractSessionID(payload) {
-  return String(payload?.data?.auth?.data?.sessionId || "").trim();
+  const gamesURL = String(payload?.data?.games || "").trim();
+  if (!gamesURL) return "";
+  try {
+    return String(new URL(gamesURL).searchParams.get("id") || "").trim();
+  } catch {
+    return "";
+  }
 }
 
 function isAuthenticationFailure(payload, status) {

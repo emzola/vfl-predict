@@ -65,8 +65,8 @@ test("Bet9jaApiClient scopes login cookies and matches ticket request headers", 
         headers: { "content-type": "application/json", "set-cookie": "sid=abc; Path=/; HttpOnly" },
       });
     }
-    if (parsed.pathname === "/getinit") {
-      return new Response(JSON.stringify({ status: 1, data: { auth: { status: 1, data: { sessionId: "session-1" } } } }), {
+    if (parsed.pathname === "/getGames") {
+      return new Response(JSON.stringify({ status: 1, data: { games: "https://vgcommon.aitcloud.de/srvg-launcher/stable/bwg.html?clientId=1205&id=session-1&lang=en&product=vfb&refId=&timeZone=Africa:Lagos" } }), {
         status: 200,
         headers: { "content-type": "application/json" },
       });
@@ -86,7 +86,7 @@ test("Bet9jaApiClient scopes login cookies and matches ticket request headers", 
 
   const client = new Bet9jaApiClient({
     loginURL: "https://virtual.test/login",
-    initURL: "https://virtual.test/getinit",
+    initURL: "https://virtual.test/getGames",
     ticketsBaseURL: "https://akamai.test/bookmakers",
     bookmakerID: 9478,
     apiKey: "test-key",
@@ -120,8 +120,8 @@ test("session validation rejection is classified as authentication failure", asy
     if (init.method === "POST" && String(init.body).includes("username")) {
       return new Response(JSON.stringify({ status: 1, data: { auth: { status: 1 } } }), { status: 200 });
     }
-    if (parsed.pathname === "/getinit") {
-      return new Response(JSON.stringify({ status: 1, data: { auth: { status: 1, data: { sessionId: "session-1" } } } }), { status: 200 });
+    if (parsed.pathname === "/getGames") {
+      return new Response(JSON.stringify({ status: 1, data: { games: "https://vgcommon.aitcloud.de/srvg-launcher/stable/bwg.html?clientId=1205&id=session-1&lang=en&product=vfb&refId=&timeZone=Africa:Lagos" } }), { status: 200 });
     }
     return new Response(JSON.stringify({
       errors: [{ message: "REJECTED_SESSION_VALIDATION: Session does not exist." }],
@@ -130,7 +130,7 @@ test("session validation rejection is classified as authentication failure", asy
   };
   const client = new Bet9jaApiClient({
     loginURL: "https://virtual.test/login",
-    initURL: "https://virtual.test/getinit",
+    initURL: "https://virtual.test/getGames",
     ticketsBaseURL: "https://akamai.test/bookmakers",
     bookmakerID: 9478,
     apiKey: "test-key",
@@ -138,12 +138,10 @@ test("session validation rejection is classified as authentication failure", asy
   });
   await client.login({ username: "user", password: "password" });
   await assert.rejects(
-    () => client.placeBet([{ version: "2.2", sender: { endCustomer: { id: "session-1" } } }]),
+    () => client.placeBet([{ version: "2.2" }]),
     (error) => {
       assert.ok(error instanceof Bet9jaAuthError);
       assert.match(error.message, /REJECTED_SESSION_VALIDATION: Session does not exist\./);
-      assert.match(error.message, /ticket URL session ID: session-1/);
-      assert.match(error.message, /payload endCustomer\.id: session-1/);
       return true;
     },
   );
@@ -156,14 +154,14 @@ test("an explicit provider auth response becomes a safe re-login signal", async 
     if (init.method === "POST" && String(init.body).includes("username")) {
       return new Response(JSON.stringify({ status: 1, data: { auth: { status: 1 } } }), { status: 200 });
     }
-    if (parsed.pathname === "/getinit") {
-      return new Response(JSON.stringify({ status: 1, data: { auth: { status: 1, data: { sessionId: "session-1" } } } }), { status: 200 });
+    if (parsed.pathname === "/getGames") {
+      return new Response(JSON.stringify({ status: 1, data: { games: "https://vgcommon.aitcloud.de/srvg-launcher/stable/bwg.html?clientId=1205&id=session-1&lang=en&product=vfb&refId=&timeZone=Africa:Lagos" } }), { status: 200 });
     }
     return new Response(JSON.stringify({ status: -1, data: { auth: { status: -1 } } }), { status: 200 });
   };
   const client = new Bet9jaApiClient({
     loginURL: "https://tickets.test/login",
-    initURL: "https://tickets.test/getinit",
+    initURL: "https://tickets.test/getGames",
     ticketsBaseURL: "https://tickets.test/bookmakers",
     bookmakerID: 9478,
     apiKey: "test-key",

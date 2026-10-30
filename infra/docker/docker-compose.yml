@@ -87,7 +87,7 @@ services:
       AUTOBET_MAX_ODDS_AGE_SECONDS: ${AUTOBET_MAX_ODDS_AGE_SECONDS:-180}
       BET9JA_REQUEST_TIMEOUT_MS: ${BET9JA_REQUEST_TIMEOUT_MS:-30000}
       BET9JA_BOOKMAKER_ID: ${BET9JA_BOOKMAKER_ID:-9478}
-      BET9JA_INIT_URL: ${BET9JA_INIT_URL:-https://virtual.bet9ja.com/commonmenu/CommonDesktopMenu/getinit}
+      BET9JA_INIT_URL: ${BET9JA_INIT_URL:-https://virtual.bet9ja.com/betradardesktopmenu/IntegrationBetradar/getGames}
       BET9JA_API_KEY: ${BET9JA_API_KEY:-}
       BET9JA_LIMIT_ID: ${BET9JA_LIMIT_ID:-1424}
       BET9JA_SELECTION_ID: ${BET9JA_SELECTION_ID:-uof:6/sr:sport:1/18/12?total=1.5}
