@@ -17,7 +17,6 @@ const maxConsecutiveFailures = numberEnv("AUTOBET_MAX_FAILURES_BEFORE_RESTART", 
 const maxOddsAgeMs = numberEnv("AUTOBET_MAX_ODDS_AGE_SECONDS", 180, 5) * 1000;
 
 const bookmakerID = numberEnv("BET9JA_BOOKMAKER_ID", 9478, 1);
-const userID = process.env.BET9JA_USER_ID || "";
 const apiKey = process.env.BET9JA_API_KEY || "";
 const limitID = numberEnv("BET9JA_LIMIT_ID", 1424, 1);
 const selectionID = process.env.BET9JA_SELECTION_ID || "uof:6/sr:sport:1/18/12?total=1.5";
@@ -29,9 +28,9 @@ const oddsScale = numberEnv("BET9JA_ODDS_SCALE", 10000, 1);
 
 const provider = new Bet9jaApiClient({
   loginURL: process.env.BET9JA_LOGIN_URL || "https://virtual.bet9ja.com/commonmenu/CommonDesktopMenu/login",
+  initURL: process.env.BET9JA_INIT_URL || "https://virtual.bet9ja.com/commonmenu/CommonDesktopMenu/getinit",
   ticketsBaseURL: process.env.BET9JA_TICKETS_BASE_URL || "https://rgspluslive-vs001.akamaized.net/betting-rest/bookmakers",
   bookmakerID,
-  userID,
   apiKey,
   timeoutMs: numberEnv("BET9JA_REQUEST_TIMEOUT_MS", 30000, 1000),
 });
@@ -260,9 +259,9 @@ async function placeCandidate(candidate, selection, credentials) {
     };
   }
 
-  const payload = buildBetPayload(candidate, selection, {
+  const buildPayload = () => buildBetPayload(candidate, selection, {
     bookmakerID,
-    userID,
+    sessionID: provider.sessionID,
     limitID,
     selectionID,
     productType,
@@ -271,6 +270,7 @@ async function placeCandidate(candidate, selection, credentials) {
     stakeScale,
     oddsScale,
   });
+  let payload = buildPayload();
   if (dryRun) {
     return {
       action: "placed",
@@ -288,6 +288,7 @@ async function placeCandidate(candidate, selection, credentials) {
     // failures and malformed provider responses remain unconfirmed so a second
     // ticket cannot be created accidentally.
     await provider.login(credentials);
+    payload = buildPayload();
     placed = await provider.placeBet(payload);
   }
   return {

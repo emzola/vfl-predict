@@ -1,4 +1,5 @@
 const DEFAULT_LOGIN_URL = "https://virtual.bet9ja.com/commonmenu/CommonDesktopMenu/login";
+const DEFAULT_INIT_URL = "https://virtual.bet9ja.com/commonmenu/CommonDesktopMenu/getinit";
 const DEFAULT_TICKETS_BASE_URL = "https://rgspluslive-vs001.akamaized.net/betting-rest/bookmakers";
 
 export class Bet9jaError extends Error {
@@ -163,18 +164,18 @@ export class CookieJar {
 export class Bet9jaApiClient {
   constructor({
     loginURL = DEFAULT_LOGIN_URL,
+    initURL = DEFAULT_INIT_URL,
     ticketsBaseURL = DEFAULT_TICKETS_BASE_URL,
     bookmakerID,
-    userID,
     apiKey,
     timeoutMs = 30000,
     fetchImpl = globalThis.fetch,
     cookieJar = new CookieJar(),
   } = {}) {
     this.loginURL = loginURL;
+    this.initURL = initURL;
     this.ticketsBaseURL = ticketsBaseURL.replace(/\/+$/, "");
     this.bookmakerID = bookmakerID;
-    this.userID = String(userID || "").trim();
     this.apiKey = String(apiKey || "").trim();
     this.timeoutMs = Math.max(1000, Number(timeoutMs) || 30000);
     this.fetchImpl = fetchImpl;
@@ -182,12 +183,13 @@ export class Bet9jaApiClient {
     this.authenticated = false;
     this.credentials = null;
     this.lastLoginAt = null;
+    this.sessionID = "";
     this.loginCookieHeader = "";
   }
 
   get ticketsURL() {
-    if (!this.userID || !this.apiKey || !Number.isFinite(Number(this.bookmakerID))) return "";
-    return `${this.ticketsBaseURL}/${encodeURIComponent(String(this.bookmakerID))}/users/${encodeURIComponent(this.userID)}/tickets?key=${encodeURIComponent(this.apiKey)}`;
+    if (!this.sessionID || !this.apiKey || !Number.isFinite(Number(this.bookmakerID))) return "";
+    return `${this.ticketsBaseURL}/${encodeURIComponent(String(this.bookmakerID))}/users/${encodeURIComponent(this.sessionID)}/tickets?key=${encodeURIComponent(this.apiKey)}`;
   }
 
   credentialsMatch(credentials) {
@@ -202,6 +204,7 @@ export class Bet9jaApiClient {
   clearSession() {
     this.authenticated = false;
     this.cookieJar.clear();
+    this.sessionID = "";
     this.loginCookieHeader = "";
   }
 
@@ -237,12 +240,36 @@ export class Bet9jaApiClient {
     if (!loginSucceeded(result.payload)) {
       throw new Bet9jaAuthError(`Bet9ja login was rejected: ${providerMessage(result.payload) || "invalid credentials"}.`);
     }
+    let initPayload;
+    try {
+      initPayload = await this.getInit();
+    } catch (error) {
+      this.clearSession();
+      throw error;
+    }
+    const sessionID = extractSessionID(initPayload);
+    if (!sessionID) {
+      this.clearSession();
+      throw new Bet9jaAuthError("Bet9ja getInit returned no session id after login.");
+    }
+    this.sessionID = sessionID;
     this.credentials = { username: String(credentials.username), password: String(credentials.password) };
     this.authenticated = true;
     this.lastLoginAt = new Date().toISOString();
     // The login and ticket endpoints use different hostnames. Bridge the
     // authenticated login cookies explicitly to the documented ticket endpoint.
     this.loginCookieHeader = this.cookieJar.allHeader();
+    return { login: result.payload, init: initPayload };
+  }
+
+  async getInit() {
+    const result = await this.request(this.initURL, { method: "GET" });
+    if (!result.response.ok) {
+      throw new Bet9jaAuthError(`Bet9ja getInit failed with HTTP ${result.response.status}.`);
+    }
+    if (!loginSucceeded(result.payload)) {
+      throw new Bet9jaAuthError(`Bet9ja getInit rejected the session: ${providerMessage(result.payload) || "authentication failed"}.`);
+    }
     return result.payload;
   }
 
@@ -253,7 +280,7 @@ export class Bet9jaApiClient {
     }
     try {
       if (!this.ticketsURL) {
-        throw new Bet9jaConfigurationError("Bet9ja bookmaker, user, and API key settings are required to log out.");
+        throw new Bet9jaConfigurationError("Bet9ja bookmaker, API key, and current session settings are required to log out.");
       }
       const result = await this.request(this.ticketsURL, { method: "GET" });
       if (!result.response.ok) {
@@ -270,7 +297,7 @@ export class Bet9jaApiClient {
       throw new Bet9jaAuthError("Bet9ja session is not authenticated.");
     }
     if (!this.ticketsURL) {
-      throw new Bet9jaConfigurationError("Bet9ja bookmaker, user, and API key settings are required to place bets.");
+      throw new Bet9jaConfigurationError("Bet9ja bookmaker, API key, and current session settings are required to place bets.");
     }
     let result;
     try {
@@ -348,7 +375,7 @@ export class Bet9jaApiClient {
 
 export function buildBetPayload(candidate, selection, {
   bookmakerID = 9478,
-  userID = "",
+  sessionID = "",
   limitID = 1424,
   selectionID = "uof:6/sr:sport:1/18/12?total=1.5",
   productType = "VFLM",
@@ -366,12 +393,14 @@ export function buildBetPayload(candidate, selection, {
   const normalizedLimitID = Number(limitID);
   const normalizedStakeScale = Number(stakeScale);
   const normalizedOddsScale = Number(oddsScale);
+  const normalizedSessionID = String(sessionID || "").trim();
   if (!Number.isSafeInteger(matchID) || matchID <= 0) throw new Bet9jaConfigurationError("The candidate match id is invalid.");
   if (!Number.isFinite(decimalOdds) || decimalOdds <= 0) throw new Bet9jaConfigurationError("The live selection odds are invalid.");
   if (!Number.isFinite(stake) || stake <= 0) throw new Bet9jaConfigurationError("The candidate stake is invalid.");
   if (!Number.isFinite(scheduledAt) || scheduledAt <= 0) throw new Bet9jaConfigurationError("The candidate kickoff time is invalid.");
   if (!Number.isSafeInteger(normalizedBookmakerID) || normalizedBookmakerID <= 0) throw new Bet9jaConfigurationError("The Bet9ja bookmaker id is invalid.");
   if (!Number.isSafeInteger(normalizedLimitID) || normalizedLimitID <= 0) throw new Bet9jaConfigurationError("The Bet9ja limit id is invalid.");
+  if (!normalizedSessionID) throw new Bet9jaConfigurationError("The current Bet9ja session id is required to place a bet.");
   if (!Number.isFinite(normalizedStakeScale) || normalizedStakeScale <= 0 || !Number.isFinite(normalizedOddsScale) || normalizedOddsScale <= 0) {
     throw new Bet9jaConfigurationError("Bet9ja ticket scales are invalid.");
   }
@@ -401,7 +430,7 @@ export function buildBetPayload(candidate, selection, {
       terminalId: null,
       limitId: normalizedLimitID,
       endCustomer: {
-        id: String(userID || ""),
+        id: normalizedSessionID,
         languageId: "en",
       },
     },
@@ -480,6 +509,10 @@ function loginSucceeded(payload) {
   const authStatus = payload?.data?.auth?.status;
   if (authStatus !== undefined && authStatus !== null) return Number(authStatus) === 1;
   return Number(payload.status) === 1;
+}
+
+function extractSessionID(payload) {
+  return String(payload?.data?.auth?.data?.sessionId || "").trim();
 }
 
 function isAuthenticationFailure(payload, status) {
