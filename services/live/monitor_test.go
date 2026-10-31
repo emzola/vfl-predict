@@ -4,6 +4,7 @@ import (
 	"testing"
 	"time"
 
+	"bet9ja-vfl/services/ingest"
 	"bet9ja-vfl/services/provider"
 )
 
@@ -18,6 +19,17 @@ func TestPollPlanUsesFixedInterval(t *testing.T) {
 		if got := plan.NextDelay(); got != cfg.PollInterval {
 			t.Fatalf("poll delay=%s want %s", got, cfg.PollInterval)
 		}
+	}
+}
+
+func TestFixtureResultsBaseURLUsesDedicatedJohannesburgFeed(t *testing.T) {
+	cfg := ingest.DefaultConfig()
+	if got := fixtureResultsBaseURL(cfg); got != ingest.DefaultResultsBaseURL {
+		t.Fatalf("results base URL=%q want %q", got, ingest.DefaultResultsBaseURL)
+	}
+	cfg.ResultsBaseURL = "https://results.example.test/feed/"
+	if got := fixtureResultsBaseURL(cfg); got != cfg.ResultsBaseURL {
+		t.Fatalf("custom results base URL=%q want %q", got, cfg.ResultsBaseURL)
 	}
 }
 

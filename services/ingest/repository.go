@@ -357,6 +357,53 @@ ON CONFLICT (match_id) DO UPDATE SET
 	return err
 }
 
+// UpsertFixtureResults merges a supplementary results-feed observation into an
+// already-canonical fixture. It deliberately leaves schedule, team, and
+// tournament fields untouched so the prediction-input fixture remains owned by
+// the primary live feed.
+func (r *Repository) UpsertFixtureResults(ctx context.Context, fixture provider.Fixture, rawPayloadID string, now time.Time, confirmationWindow time.Duration) error {
+	status := fixture.StatusAsOf(now, confirmationWindow)
+	var resultHome, resultAway, halfHome, halfAway, fullHome, fullAway any
+	if fixture.Score != nil {
+		resultHome, resultAway = fixture.Score.Home, fixture.Score.Away
+	}
+	if fixture.HalfTimeScore != nil {
+		halfHome, halfAway = fixture.HalfTimeScore.Home, fixture.HalfTimeScore.Away
+	}
+	if fixture.FullTimeScore != nil {
+		fullHome, fullAway = fixture.FullTimeScore.Home, fixture.FullTimeScore.Away
+	}
+	resultStatus := string(status)
+	resultObservedAt := now.UTC()
+	resultPayloadID := strings.TrimSpace(rawPayloadID)
+	_, err := r.DB.ExecContext(ctx, `
+UPDATE fixtures
+SET status = CASE
+        WHEN $8::boolean OR $9::boolean OR $10::boolean THEN $7
+        WHEN $1::integer IS NOT NULL AND $2::integer IS NOT NULL AND $7 = 'completed' THEN $7
+        WHEN fixtures.status IN ('completed', 'canceled', 'postponed') THEN fixtures.status
+        ELSE $7
+    END,
+    result_home = COALESCE($1::integer, fixtures.result_home),
+    result_away = COALESCE($2::integer, fixtures.result_away),
+    half_time_home = COALESCE($3::integer, fixtures.half_time_home),
+    half_time_away = COALESCE($4::integer, fixtures.half_time_away),
+    full_time_home = COALESCE($5::integer, fixtures.full_time_home),
+    full_time_away = COALESCE($6::integer, fixtures.full_time_away),
+    postponed = fixtures.postponed OR $8::boolean,
+    canceled = fixtures.canceled OR $9::boolean,
+    walkover = fixtures.walkover OR $10::boolean,
+    to_be_announced = fixtures.to_be_announced OR $11::boolean,
+    in_live_score = $12::boolean,
+    status_observed_at = $13,
+    raw_payload_id = COALESCE(NULLIF($14, '')::uuid, fixtures.raw_payload_id),
+    updated_at = $13
+WHERE match_id = $15`, resultHome, resultAway, halfHome, halfAway, fullHome, fullAway,
+		resultStatus, fixture.Postponed, fixture.Canceled, fixture.Walkover, fixture.ToBeAnnounced,
+		fixture.InLiveScore, resultObservedAt, resultPayloadID, fixture.MatchID)
+	return err
+}
+
 type OddsPersistResult struct {
 	Accepted    int
 	Quarantined int
