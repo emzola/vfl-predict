@@ -23,6 +23,18 @@ export type Bookmaker = {
   overround: number;
 };
 
+export type BookmakerGoalMarket = {
+  market_id: number;
+  specifiers: string;
+  over_odds: number;
+  under_odds: number;
+  implied: { over_2_5: number; under_2_5: number };
+  model_difference: number;
+  overround: number;
+  point_in_time_verified: boolean;
+  observation_kind?: string;
+};
+
 export type SecondaryGoalPrediction = {
   probability?: Probability;
   lambda_home?: number;
@@ -82,6 +94,7 @@ export type Prediction = {
   ineligible_reason?: string;
   created_at: string;
   bookmaker?: Bookmaker;
+  bookmaker_goal_market?: BookmakerGoalMarket;
   secondary?: SecondaryGoalPrediction;
   secondary_model?: string;
   dynamic_team_strength?: DynamicTeamStrength;
@@ -183,6 +196,7 @@ export type AutoBettingSettings = {
   enabled: boolean;
   base_stake: number;
   profit_target: number;
+  staking_strategy: string;
   credentials_configured: boolean;
   masked_username?: string;
   credentials_updated_at?: string;

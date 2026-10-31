@@ -309,6 +309,7 @@ RETURNING prediction_run_id::text, status, generated_fixture_count`, seasonID, r
 		clone.AwayScore = nil
 		clone.Odds = eligibleOdds(target.Odds, cutoff, cfg.RequireVerifiedOdds)
 		line, hasOdds := research.FindOneXTwoOddsAt(clone, cutoff)
+		goalLine, hasGoalMarket := research.FindOverUnder25OddsAt(clone, cutoff)
 		probability := model.Predict(clone)
 		if err := probability.Validate(1e-8); err != nil {
 			return RoundReport{}, fmt.Errorf("model %s produced invalid probability for match %s: %w", cfg.ModelName, target.MatchID, err)
@@ -341,18 +342,26 @@ RETURNING prediction_run_id::text, status, generated_fixture_count`, seasonID, r
 		if fallbackReason != "" {
 			payload["fallback_reason"] = fallbackReason
 		}
+		var goalPrediction research.GoalPrediction
+		var hasGoalPrediction bool
 		switch selected := model.(type) {
 		case *research.PoissonGoalModel:
-			payload["secondary"] = selected.PredictGoals(clone, 10)
+			goalPrediction = selected.PredictGoals(clone, 10)
+			payload["secondary"] = goalPrediction
 			payload["secondary_model"] = "poisson"
+			hasGoalPrediction = true
 		case *research.BookmakerFirstModel:
-			payload["secondary"] = selected.PoissonGoals(clone, 10)
+			goalPrediction = selected.PoissonGoals(clone, 10)
+			payload["secondary"] = goalPrediction
 			payload["secondary_model"] = "poisson"
+			hasGoalPrediction = true
 		case *research.DynamicBayesianModel:
-			payload["secondary"] = selected.PredictGoals(clone, selected.Config.MaxScore)
+			goalPrediction = selected.PredictGoals(clone, selected.Config.MaxScore)
+			payload["secondary"] = goalPrediction
 			payload["secondary_model"] = research.DynamicBayesianModelName
 			payload["dynamic_team_strength"] = selected.Diagnostics(clone)
 			payload["training_scope"] = dynamicTrainingScope
+			hasGoalPrediction = true
 		}
 		feature, featureErr := research.BuildFeatureVector(inputDataset, clone, cutoff, cfg.FeatureConfig)
 		if featureErr == nil {
@@ -372,6 +381,20 @@ RETURNING prediction_run_id::text, status, generated_fixture_count`, seasonID, r
 			payload["bookmaker"] = map[string]any{
 				"home": line.Home, "draw": line.Draw, "away": line.Away,
 				"implied": line.ImpliedProbabilities(), "overround": line.Overround,
+			}
+		}
+		if hasGoalMarket && hasGoalPrediction {
+			implied := goalLine.ImpliedProbabilities()
+			payload["bookmaker_goal_market"] = map[string]any{
+				"market_id":              research.GoalTotalsMarketID,
+				"specifiers":             research.GoalTotalsSpecifier25,
+				"over_odds":              goalLine.Over25,
+				"under_odds":             goalLine.Under25,
+				"implied":                implied,
+				"model_difference":       goalPrediction.Over25 - implied.Over25,
+				"overround":              goalLine.Overround,
+				"point_in_time_verified": goalLine.PointInTimeVerified,
+				"observation_kind":       goalLine.ObservationKind,
 			}
 		}
 		payloadJSON, _ := json.Marshal(payload)

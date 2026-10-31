@@ -146,8 +146,9 @@ keeps the ten-second minimum spacing. The operational API binds to loopback by
 default; set an internal token before using a non-loopback bind.
 
 The prediction worker defaults to the `dynamic_bayesian_team_strength` policy.
-It generates current-season model probabilities and uses normalized,
-point-in-time bookmaker-implied 1X2 probabilities as the market/value
+It generates current-season model probabilities and records verified,
+point-in-time bookmaker markets. Auto-betting uses the model's Over 2.5
+probability versus the normalized bookmaker Over 2.5 market as its value
 benchmark. Use `-model bookmaker_first` to explicitly make bookmaker
 probabilities the primary 1X2 prediction, or `-model poisson` to run the
 statistical fallback policy directly.

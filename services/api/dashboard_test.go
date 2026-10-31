@@ -17,6 +17,13 @@ func TestApplyPredictionPayloadExposesBookmakerProvenance(t *testing.T) {
 			"implied":   map[string]float64{"home": 0.5, "draw": 0.3, "away": 0.2},
 			"overround": 1.08,
 		},
+		"bookmaker_goal_market": map[string]any{
+			"market_id": 18, "specifiers": "total=2.5",
+			"over_odds": 1.70, "under_odds": 2.30,
+			"implied":          map[string]float64{"over_2_5": 0.58, "under_2_5": 0.42},
+			"model_difference": 0.99,
+			"overround":        1.05, "point_in_time_verified": true,
+		},
 		"secondary":             map[string]any{"over_2_5": 0.51},
 		"secondary_model":       "poisson",
 		"dynamic_team_strength": map[string]any{"home_rating": 0.42, "total_matches_used": 12},
@@ -31,6 +38,12 @@ func TestApplyPredictionPayloadExposesBookmakerProvenance(t *testing.T) {
 	}
 	if math.Abs(item.Bookmaker.ModelDifference.Home-0.05) > 1e-9 {
 		t.Fatalf("home model difference=%v", item.Bookmaker.ModelDifference.Home)
+	}
+	if item.BookmakerGoalMarket == nil || item.BookmakerGoalMarket.OverOdds != 1.70 {
+		t.Fatalf("goal-market payload=%+v", item.BookmakerGoalMarket)
+	}
+	if math.Abs(item.BookmakerGoalMarket.ModelDifference-(0.51-0.58)) > 1e-9 {
+		t.Fatalf("Over 2.5 model difference=%v", item.BookmakerGoalMarket.ModelDifference)
 	}
 	if item.Engine != "bookmaker_implied" || item.EngineVersion != "phase2.v1" || item.PredictionPolicy != "bookmaker_first" {
 		t.Fatalf("engine provenance=%+v", item)

@@ -61,6 +61,10 @@ the model; it does not bypass them.
 
 `016_phase7_flat_multi_betting.sql` updates the auto-betting ledger for
 fixture-level compatibility while the active selection logic chooses only the
-top-ranked qualifying prediction per frozen round. Auto betting uses a flat
-stake, accepts any valid Over 1.5 odds, and does not wait for earlier bets to
-settle before processing later frozen rounds.
+highest-ranked frozen prediction per round. Auto betting uses odds-aware
+martingale staking, accepts Over 1.5 odds at least 1.20, and waits for each
+bet to settle before processing the next frozen round.
+
+`017_phase7_martingale_settlement.sql` restores the 1.20 minimum-odds default
+for new auto-betting ledger rows and records the settlement-gated staking
+behavior used by the worker.

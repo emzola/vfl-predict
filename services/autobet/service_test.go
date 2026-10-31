@@ -6,23 +6,29 @@ import (
 	"testing"
 )
 
-func TestRankPredictionsPrefersPositiveMarketDifference(t *testing.T) {
+func TestRankPredictionsPrefersPositiveOver25MarketDifference(t *testing.T) {
 	items := []predictionRow{
 		{
 			MatchID: 1,
 			Probability: probability{
 				Home: 0.60, Draw: 0.20, Away: 0.20,
 			},
-			PointInTimeVerified: true,
-			Bookmaker:           &bookmakerPayload{ModelDifference: probability{Home: 0.02, Draw: -0.01, Away: 0}},
+			Secondary: &secondaryGoalPayload{Over25: 0.70},
+			BookmakerGoalMarket: &bookmakerGoalMarketPayload{
+				Implied:             goalMarketProbability{Over25: 0.60},
+				PointInTimeVerified: true,
+			},
 		},
 		{
 			MatchID: 2,
 			Probability: probability{
 				Home: 0.30, Draw: 0.20, Away: 0.50,
 			},
-			PointInTimeVerified: true,
-			Bookmaker:           &bookmakerPayload{ModelDifference: probability{Home: 0.01, Draw: 0.02, Away: 0.12}},
+			Secondary: &secondaryGoalPayload{Over25: 0.75},
+			BookmakerGoalMarket: &bookmakerGoalMarketPayload{
+				Implied:             goalMarketProbability{Over25: 0.55},
+				PointInTimeVerified: true,
+			},
 		},
 	}
 
@@ -33,8 +39,14 @@ func TestRankPredictionsPrefersPositiveMarketDifference(t *testing.T) {
 	if ranked[0].MatchID != 2 {
 		t.Fatalf("top match=%d want 2", ranked[0].MatchID)
 	}
-	if ranked[0].DecisionBasis != "market_difference" || ranked[0].DecisionOutcome != "away" {
+	if ranked[0].DecisionBasis != "goal_market_difference" || ranked[0].DecisionOutcome != "over_2_5" {
 		t.Fatalf("top decision=%+v", ranked[0])
+	}
+	if ranked[0].DecisionMarketDifference == nil || math.Abs(*ranked[0].DecisionMarketDifference-0.20) > 1e-9 {
+		t.Fatalf("top market difference=%v want 0.20", ranked[0].DecisionMarketDifference)
+	}
+	if math.Abs(ranked[0].DecisionProbability-0.75) > 1e-9 {
+		t.Fatalf("top decision probability=%v want 0.75", ranked[0].DecisionProbability)
 	}
 }
 
@@ -89,6 +101,11 @@ func TestApplyPredictionPayloadRecomputesMarketDifferenceFromImplied(t *testing.
 			// recompute these from implied probabilities.
 			ModelDifference: probability{},
 		},
+		BookmakerGoalMarket: &bookmakerGoalMarketPayload{
+			Implied:             goalMarketProbability{Over25: 0.63, Under25: 0.37},
+			PointInTimeVerified: true,
+		},
+		Secondary: &secondaryGoalPayload{Over25: 0.70, Under25: 0.30},
 	})
 	if err != nil {
 		t.Fatalf("marshal payload: %v", err)
@@ -107,11 +124,14 @@ func TestApplyPredictionPayloadRecomputesMarketDifferenceFromImplied(t *testing.
 	}
 
 	ranked := rankPredictions([]predictionRow{item})
-	if ranked[0].DecisionBasis != "market_difference" {
-		t.Fatalf("decision basis=%s want market_difference", ranked[0].DecisionBasis)
+	if ranked[0].DecisionBasis != "goal_market_difference" {
+		t.Fatalf("decision basis=%s want goal_market_difference", ranked[0].DecisionBasis)
 	}
-	if ranked[0].DecisionOutcome != "home" {
-		t.Fatalf("decision outcome=%s want home", ranked[0].DecisionOutcome)
+	if ranked[0].DecisionOutcome != "over_2_5" {
+		t.Fatalf("decision outcome=%s want over_2_5", ranked[0].DecisionOutcome)
+	}
+	if ranked[0].DecisionMarketDifference == nil || math.Abs(*ranked[0].DecisionMarketDifference-0.07) > 1e-9 {
+		t.Fatalf("decision market difference=%v want 0.07", ranked[0].DecisionMarketDifference)
 	}
 }
 
@@ -131,8 +151,8 @@ func TestApplyPredictionPayloadLoadsSecondaryGoalMarkets(t *testing.T) {
 
 	applyPredictionPayload(&item, payload)
 
-	if !qualifiesForSecondary(item.Secondary) {
-		t.Fatalf("secondary payload should qualify: %+v", item.Secondary)
+	if item.Secondary == nil || item.Secondary.Over25 != 0.74 || item.Secondary.BothTeamsToScore != 0.52 {
+		t.Fatalf("secondary payload was not loaded: %+v", item.Secondary)
 	}
 }
 
@@ -142,112 +162,65 @@ func TestRoundMoneyRoundsToTwoDecimals(t *testing.T) {
 	}
 }
 
-func TestQualifiesForOver15(t *testing.T) {
+func TestDetermineMartingaleStake(t *testing.T) {
 	tests := []struct {
-		name  string
-		value probability
-		want  bool
+		name          string
+		baseStake     float64
+		settledProfit float64
+		pendingStake  float64
+		quotedOdds    float64
+		want          float64
 	}{
 		{
-			name:  "home and draw both exceed away",
-			value: probability{Home: 0.855, Draw: 0.097, Away: 0.048},
-			want:  true,
+			name:       "fresh cycle starts at base stake",
+			baseStake:  5000,
+			quotedOdds: 1.30,
+			want:       5000,
 		},
 		{
-			name:  "away and draw both exceed home",
-			value: probability{Home: 0.12, Draw: 0.28, Away: 0.60},
-			want:  true,
+			name:       "minimum odds are accepted",
+			baseStake:  50,
+			quotedOdds: 1.20,
+			want:       50,
 		},
 		{
-			name:  "draw does not exceed away",
-			value: probability{Home: 0.39, Draw: 0.264, Away: 0.346},
-			want:  false,
+			name:          "recovers settled loss and preserves base-stake profit",
+			baseStake:     5000,
+			settledProfit: -5000,
+			quotedOdds:    1.30,
+			want:          21666.67,
 		},
 		{
-			name:  "ties do not qualify",
-			value: probability{Home: 0.40, Draw: 0.30, Away: 0.40},
-			want:  false,
+			name:         "includes unsettled exposure",
+			baseStake:    50,
+			pendingStake: 50,
+			quotedOdds:   1.20,
+			want:         300,
+		},
+		{
+			name:          "positive settled profit resets losses",
+			baseStake:     50,
+			settledProfit: 15,
+			quotedOdds:    1.30,
+			want:          50,
 		},
 	}
 
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			if got := qualifiesForOver15(tc.value); got != tc.want {
-				t.Fatalf("qualifiesForOver15(%+v)=%v want %v", tc.value, got, tc.want)
+			got, err := determineMartingaleStake(tc.baseStake, tc.settledProfit, tc.pendingStake, tc.quotedOdds)
+			if err != nil {
+				t.Fatalf("determineMartingaleStake error: %v", err)
+			}
+			if math.Abs(got-tc.want) > 1e-9 {
+				t.Fatalf("determineMartingaleStake=%v want %v", got, tc.want)
 			}
 		})
 	}
 }
 
-func TestQualifiesForSecondary(t *testing.T) {
-	valid := &secondaryGoalPayload{
-		Over25:           0.74,
-		Under25:          0.26,
-		BothTeamsToScore: 0.52,
-		NeitherTeamScore: 0.48,
-	}
-	tests := []struct {
-		name  string
-		value *secondaryGoalPayload
-		want  bool
-	}{
-		{name: "over 2.5 is highest and btts is second", value: valid, want: true},
-		{
-			name:  "over 2.5 does not exceed btts",
-			value: &secondaryGoalPayload{Over25: 0.52, Under25: 0.20, BothTeamsToScore: 0.60, NeitherTeamScore: 0.40},
-			want:  false,
-		},
-		{
-			name:  "btts does not exceed under 2.5",
-			value: &secondaryGoalPayload{Over25: 0.74, Under25: 0.55, BothTeamsToScore: 0.52, NeitherTeamScore: 0.48},
-			want:  false,
-		},
-		{
-			name:  "btts does not exceed neither",
-			value: &secondaryGoalPayload{Over25: 0.74, Under25: 0.26, BothTeamsToScore: 0.48, NeitherTeamScore: 0.52},
-			want:  false,
-		},
-		{name: "missing secondary market", value: nil, want: false},
-	}
-
-	for _, tc := range tests {
-		t.Run(tc.name, func(t *testing.T) {
-			if got := qualifiesForSecondary(tc.value); got != tc.want {
-				t.Fatalf("qualifiesForSecondary(%+v)=%v want %v", tc.value, got, tc.want)
-			}
-		})
-	}
-}
-
-func TestDetermineNextStake(t *testing.T) {
-	tests := []struct {
-		name      string
-		baseStake float64
-		want      float64
-	}{
-		{
-			name:      "flat stake remains unchanged",
-			baseStake: 5000,
-			want:      5000,
-		},
-		{
-			name:      "decimal stake is rounded",
-			baseStake: 5000.567,
-			want:      5000.57,
-		},
-		{
-			name:      "fresh cycle uses base stake",
-			baseStake: 5000,
-			want:      5000,
-		},
-	}
-
-	for _, tc := range tests {
-		t.Run(tc.name, func(t *testing.T) {
-			got := determineNextStake(tc.baseStake)
-			if got != tc.want {
-				t.Fatalf("determineNextStake=%v want %v", got, tc.want)
-			}
-		})
+func TestDetermineMartingaleStakeRejectsOddsBelowMinimum(t *testing.T) {
+	if _, err := determineMartingaleStake(50, 0, 0, 1.19); err == nil {
+		t.Fatal("expected odds below 1.20 to be rejected")
 	}
 }

@@ -16,6 +16,16 @@ import (
 // line before using it.
 const OneXTwoMarketID int64 = 1
 
+// The provider's full-match Over/Under 2.5 market uses market 18 with the
+// total=2.5 specifier. Both outcome quotes are required before the line is
+// considered usable.
+const (
+	GoalTotalsMarketID     int64 = 18
+	GoalTotalsSpecifier25        = "total=2.5"
+	GoalTotalsOverOutcome        = "12"
+	GoalTotalsUnderOutcome       = "13"
+)
+
 func FindOneXTwoOdds(match MatchRecord, allowUnverified bool) (OddsLine, bool) {
 	return findOneXTwoOdds(match, time.Time{}, allowUnverified, false)
 }
@@ -25,6 +35,17 @@ func FindOneXTwoOdds(match MatchRecord, allowUnverified bool) (OddsLine, bool) {
 // A provider response timestamp alone is not sufficient evidence.
 func FindOneXTwoOddsAt(match MatchRecord, cutoff time.Time) (OddsLine, bool) {
 	return findOneXTwoOdds(match, cutoff, false, true)
+}
+
+func FindOverUnder25Odds(match MatchRecord, allowUnverified bool) (GoalTotalsLine, bool) {
+	return findOverUnder25Odds(match, time.Time{}, allowUnverified, false)
+}
+
+// FindOverUnder25OddsAt is the point-in-time-safe selector for the full-match
+// Over/Under 2.5 market. Both quotes must be verified and observed no later
+// than the prediction cutoff.
+func FindOverUnder25OddsAt(match MatchRecord, cutoff time.Time) (GoalTotalsLine, bool) {
+	return findOverUnder25Odds(match, cutoff, false, true)
 }
 
 func findOneXTwoOdds(match MatchRecord, cutoff time.Time, allowUnverified, enforceAsOf bool) (OddsLine, bool) {
@@ -88,6 +109,64 @@ func findOneXTwoOdds(match MatchRecord, cutoff time.Time, allowUnverified, enfor
 	return line, true
 }
 
+func findOverUnder25Odds(match MatchRecord, cutoff time.Time, allowUnverified, enforceAsOf bool) (GoalTotalsLine, bool) {
+	type candidate struct {
+		over  bool
+		quote OddsQuote
+	}
+	candidates := make([]candidate, 0, 2)
+	for _, quote := range match.Odds {
+		if quote.MarketID != GoalTotalsMarketID || strings.TrimSpace(quote.Specifiers) != GoalTotalsSpecifier25 || quote.Odds <= 0 || math.IsNaN(quote.Odds) || math.IsInf(quote.Odds, 0) {
+			continue
+		}
+		if !allowUnverified && !quote.PointInTimeVerified {
+			continue
+		}
+		if enforceAsOf {
+			if !quote.PointInTimeVerified || quote.ObservedAt.IsZero() || quote.ObservedAt.After(cutoff) {
+				continue
+			}
+		}
+		over, ok := classifyGoalTotalsOutcome(quote)
+		if !ok {
+			continue
+		}
+		candidates = append(candidates, candidate{over: over, quote: quote})
+	}
+	if len(candidates) == 0 {
+		return GoalTotalsLine{}, false
+	}
+	var overQuote, underQuote OddsQuote
+	var overOK, underOK bool
+	for _, candidate := range candidates {
+		if candidate.over {
+			if !overOK || quoteAfter(candidate.quote, overQuote) {
+				overQuote, overOK = candidate.quote, true
+			}
+			continue
+		}
+		if !underOK || quoteAfter(candidate.quote, underQuote) {
+			underQuote, underOK = candidate.quote, true
+		}
+	}
+	if !overOK || !underOK {
+		return GoalTotalsLine{}, false
+	}
+	overround := 1/overQuote.Odds + 1/underQuote.Odds
+	if overround <= 0 || math.IsNaN(overround) || math.IsInf(overround, 0) {
+		return GoalTotalsLine{}, false
+	}
+	return GoalTotalsLine{
+		Over25:              overQuote.Odds,
+		Under25:             underQuote.Odds,
+		OverQuote:           overQuote,
+		UnderQuote:          underQuote,
+		Overround:           overround,
+		PointInTimeVerified: overQuote.PointInTimeVerified && underQuote.PointInTimeVerified,
+		ObservationKind:     commonObservationKind(overQuote, underQuote),
+	}, true
+}
+
 func quoteAfter(left, right OddsQuote) bool {
 	if !left.ObservedAt.Equal(right.ObservedAt) {
 		return left.ObservedAt.After(right.ObservedAt)
@@ -136,6 +215,19 @@ func classifyOutcome(quote OddsQuote, match MatchRecord) (OutcomeKey, bool) {
 		return OutcomeAway, true
 	}
 	return "", false
+}
+
+func classifyGoalTotalsOutcome(quote OddsQuote) (bool, bool) {
+	id := strings.ToLower(strings.TrimSpace(quote.OutcomeID))
+	name := normalizedText(quote.OutcomeName)
+	abbr := normalizedText(quote.OutcomeAbbreviation)
+	if id == GoalTotalsOverOutcome || strings.Contains(name, "over 2.5") || strings.Contains(abbr, "over 2.5") {
+		return true, true
+	}
+	if id == GoalTotalsUnderOutcome || strings.Contains(name, "under 2.5") || strings.Contains(abbr, "under 2.5") {
+		return false, true
+	}
+	return false, false
 }
 
 func (line OddsLine) Validate() error {

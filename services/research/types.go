@@ -285,6 +285,25 @@ type Probability struct {
 
 func (p Probability) Values() [3]float64 { return [3]float64{p.Home, p.Draw, p.Away} }
 
+type GoalTotalsProbability struct {
+	Over25  float64 `json:"over_2_5"`
+	Under25 float64 `json:"under_2_5"`
+}
+
+func NormalizeGoalTotalsProbability(over, under float64) GoalTotalsProbability {
+	values := []float64{over, under}
+	for index, value := range values {
+		if math.IsNaN(value) || math.IsInf(value, 0) || value < 0 {
+			values[index] = 0
+		}
+	}
+	sum := values[0] + values[1]
+	if sum <= 0 {
+		return GoalTotalsProbability{Over25: 0.5, Under25: 0.5}
+	}
+	return GoalTotalsProbability{Over25: values[0] / sum, Under25: values[1] / sum}
+}
+
 func (p Probability) At(outcome OutcomeKey) float64 {
 	switch outcome {
 	case OutcomeHome:
@@ -347,6 +366,36 @@ func (line OddsLine) ImpliedProbabilities() Probability {
 
 func (line OddsLine) AllQuotesVerified() bool {
 	return line.HomeQuote.PointInTimeVerified && line.DrawQuote.PointInTimeVerified && line.AwayQuote.PointInTimeVerified
+}
+
+// GoalTotalsLine is the mutually exclusive full-match Over/Under 2.5 market
+// used as the bookmaker value benchmark for auto-betting.
+type GoalTotalsLine struct {
+	Over25              float64   `json:"over_2_5"`
+	Under25             float64   `json:"under_2_5"`
+	OverQuote           OddsQuote `json:"over_quote"`
+	UnderQuote          OddsQuote `json:"under_quote"`
+	Overround           float64   `json:"overround"`
+	PointInTimeVerified bool      `json:"point_in_time_verified"`
+	ObservationKind     string    `json:"observation_kind"`
+}
+
+func (line GoalTotalsLine) ImpliedProbabilities() GoalTotalsProbability {
+	return NormalizeGoalTotalsProbability(1/line.Over25, 1/line.Under25)
+}
+
+func (line GoalTotalsLine) Validate() error {
+	if line.Over25 <= 0 || line.Under25 <= 0 {
+		return fmt.Errorf("Over/Under 2.5 odds must be positive")
+	}
+	if line.Overround <= 0 {
+		return fmt.Errorf("overround must be positive")
+	}
+	probabilities := line.ImpliedProbabilities()
+	if math.IsNaN(probabilities.Over25) || math.IsNaN(probabilities.Under25) {
+		return fmt.Errorf("Over/Under 2.5 implied probabilities are invalid")
+	}
+	return nil
 }
 
 type FeatureConfig struct {

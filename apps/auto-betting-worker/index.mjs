@@ -15,6 +15,7 @@ const dryRun = /^true$/i.test(process.env.AUTOBET_DRY_RUN || "false");
 const heartbeatMs = numberEnv("AUTOBET_HEARTBEAT_SECONDS", 15, 5) * 1000;
 const maxConsecutiveFailures = numberEnv("AUTOBET_MAX_FAILURES_BEFORE_RESTART", 3, 1);
 const maxOddsAgeMs = numberEnv("AUTOBET_MAX_ODDS_AGE_SECONDS", 180, 5) * 1000;
+const minimumBetOdds = 1.20;
 
 const bookmakerID = numberEnv("BET9JA_BOOKMAKER_ID", 9478, 1);
 const apiKey = process.env.BET9JA_API_KEY || "";
@@ -243,6 +244,7 @@ async function handleTask(task) {
         body: JSON.stringify({
           match_id: candidate.match_id,
           quoted_odds: result.quotedOdds,
+          stake_amount: candidate.stake_amount,
           bet_reference: result.betReference || "",
         }),
       });
@@ -275,6 +277,13 @@ async function placeCandidate(candidate, selection, credentials) {
   }
   if (!Number.isFinite(decimalOdds) || decimalOdds <= 0) {
     throw new Error("The live Over 1.5 selection did not contain valid odds.");
+  }
+  if (decimalOdds < minimumBetOdds) {
+    return {
+      action: "skip",
+      reason: `Over 1.5 odds ${decimalOdds.toFixed(2)} are below the configured minimum ${minimumBetOdds.toFixed(2)}.`,
+      observedOdds: decimalOdds,
+    };
   }
   if (selection.market_status !== undefined && Number(selection.market_status) !== 1) {
     return { action: "skip", reason: "The Over 1.5 market is not currently active.", observedOdds: decimalOdds };

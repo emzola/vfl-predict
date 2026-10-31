@@ -477,7 +477,7 @@ export function buildBetPayload(candidate, selection, {
   const normalizedOddsScale = Number(oddsScale);
   const normalizedSessionID = String(sessionID || "").trim();
   if (!Number.isSafeInteger(matchID) || matchID <= 0) throw new Bet9jaConfigurationError("The candidate match id is invalid.");
-  if (!Number.isFinite(decimalOdds) || decimalOdds <= 0) throw new Bet9jaConfigurationError("The live selection odds are invalid.");
+  if (!Number.isFinite(decimalOdds) || decimalOdds < 1.20) throw new Bet9jaConfigurationError("The live selection odds must be at least 1.20 for martingale staking.");
   if (!Number.isFinite(stake) || stake <= 0) throw new Bet9jaConfigurationError("The candidate stake is invalid.");
   if (!Number.isFinite(scheduledAt) || scheduledAt <= 0) throw new Bet9jaConfigurationError("The candidate kickoff time is invalid.");
   if (!Number.isSafeInteger(normalizedBookmakerID) || normalizedBookmakerID <= 0) throw new Bet9jaConfigurationError("The Bet9ja bookmaker id is invalid.");

@@ -1,6 +1,7 @@
 package research
 
 import (
+	"math"
 	"reflect"
 	"testing"
 	"time"
@@ -146,6 +147,38 @@ func TestOddsOverroundAndInvalidOrUnverifiedHandling(t *testing.T) {
 	}
 	if _, ok := unverified.OddsLine(true); !ok {
 		t.Fatal("explicit retrospective odds opt-in was not honored")
+	}
+}
+
+func TestGoalTotalsOddsSelectVerifiedPointInTimeOver25Line(t *testing.T) {
+	cutoff := time.Date(2026, 10, 25, 12, 0, 0, 0, time.UTC)
+	match := MatchRecord{
+		MatchID:      provider.MatchID(9002),
+		HomeTeamUID:  provider.TeamUID(1),
+		AwayTeamUID:  provider.TeamUID(2),
+		HomeTeamName: "Home",
+		AwayTeamName: "Away",
+		Odds: []OddsQuote{
+			{MarketID: GoalTotalsMarketID, Specifiers: GoalTotalsSpecifier25, OutcomeID: GoalTotalsOverOutcome, OutcomeName: "over 2.5", Odds: 2.0, RawOdds: "2.0", ObservedAt: cutoff.Add(-time.Minute), SourceTimestampAt: cutoff.Add(-time.Minute), PointInTimeVerified: true},
+			{MarketID: GoalTotalsMarketID, Specifiers: GoalTotalsSpecifier25, OutcomeID: GoalTotalsUnderOutcome, OutcomeName: "under 2.5", Odds: 1.8, RawOdds: "1.8", ObservedAt: cutoff.Add(-time.Minute), SourceTimestampAt: cutoff.Add(-time.Minute), PointInTimeVerified: true},
+			{MarketID: GoalTotalsMarketID, Specifiers: GoalTotalsSpecifier25, OutcomeID: GoalTotalsOverOutcome, OutcomeName: "over 2.5", Odds: 9.0, RawOdds: "9.0", ObservedAt: cutoff.Add(time.Minute), SourceTimestampAt: cutoff.Add(time.Minute), PointInTimeVerified: true},
+			{MarketID: GoalTotalsMarketID, Specifiers: GoalTotalsSpecifier25, OutcomeID: GoalTotalsUnderOutcome, OutcomeName: "under 2.5", Odds: 9.0, RawOdds: "9.0", ObservedAt: cutoff.Add(time.Minute), SourceTimestampAt: cutoff.Add(time.Minute), PointInTimeVerified: true},
+		},
+	}
+
+	line, ok := FindOverUnder25OddsAt(match, cutoff)
+	if !ok {
+		t.Fatal("verified point-in-time Over/Under 2.5 line was not detected")
+	}
+	if line.Over25 != 2.0 || line.Under25 != 1.8 {
+		t.Fatalf("future goal-market quote leaked into cutoff line: line=%+v", line)
+	}
+	if err := line.Validate(); err != nil {
+		t.Fatal(err)
+	}
+	implied := line.ImpliedProbabilities()
+	if math.Abs(implied.Over25+implied.Under25-1) > 1e-9 {
+		t.Fatalf("goal-market implied probabilities do not normalize: %+v", implied)
 	}
 }
 

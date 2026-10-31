@@ -74,7 +74,7 @@ func main() {
 	if strings.EqualFold(modelName, research.DynamicBayesianModelName) ||
 		strings.EqualFold(modelName, "dynamic_bayesian") ||
 		strings.EqualFold(modelName, "phase6") {
-		config.PolicyVersion = "phase6.pre_match.dynamic_bayesian.current_season.v1"
+		config.PolicyVersion = "phase6.pre_match.dynamic_bayesian.current_season.over25_value.v1"
 	}
 	config.SafetyBuffer = safetyBuffer
 	ownerID := fmt.Sprintf("prediction-worker-%d", os.Getpid())

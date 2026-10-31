@@ -108,16 +108,16 @@ export default function AutoBettingPage() {
       <PageHeading
         eyebrow="Auto betting"
         title="Automated staking"
-        description="Auto betting places one flat-stake Over 1.5 Goals bet on the #1-ranked frozen prediction in each round that passes both the 1X2 and secondary goal-market filters, accepts any valid odds, and tracks profit from the internal ledger instead of wallet balances."
+        description="Auto betting places one Over 1.5 Goals bet on the highest-ranked frozen prediction in each round. Ranking follows the Dynamic Bayesian Over 2.5-versus-bookmaker market comparison, with model probability as the fallback. Odds-aware martingale staking waits for settlement before sizing the next bet and preserves the profit a base-stake bet at the current odds would earn."
         action={<StatusPill status={data.runtime.state || (data.settings.enabled ? "idle" : "disabled")} />}
       />
       {error && <div className="mb-5"><ErrorState message={error} /></div>}
 
       <section className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
         <MetricCard label="Auto betting" value={data.settings.enabled ? "Enabled" : "Disabled"} detail={"Updated " + formatDate(data.settings.updated_at)} tone={data.settings.enabled ? "good" : "warn"} />
-        <MetricCard label="Flat stake" value={naira(data.settings.base_stake)} detail="The top-ranked bet in each round uses this amount" />
+        <MetricCard label="Base stake" value={naira(data.settings.base_stake)} detail="Starting stake and martingale profit unit" />
         <MetricCard label="Season profit" value={naira(summary?.total_profit || 0)} detail={summary?.season_id ? "Season " + summary.season_id : "No active season"} tone={summary?.total_profit && summary.total_profit > 0 ? "good" : "default"} />
-        <MetricCard label="Next stake" value={naira(summary?.next_stake || data.settings.base_stake)} detail="Unsettled bets do not block the next round" tone={summary?.paused ? "warn" : "default"} />
+        <MetricCard label="Next stake" value={naira(summary?.next_stake || data.settings.base_stake)} detail="Recalculated after the previous bet settles" tone={summary?.paused ? "warn" : "default"} />
       </section>
 
       <section className="mt-6 grid gap-6 xl:grid-cols-[0.9fr_1.1fr]">
@@ -128,12 +128,12 @@ export default function AutoBettingPage() {
               <input type="checkbox" checked={enabled} onChange={(event) => setEnabled(event.target.checked)} className="mt-1 h-4 w-4 rounded border-slate-700 bg-slate-950 text-accent" />
               <span>
                 <span className="block font-medium text-white">Enable auto betting</span>
-                <span className="mt-1 block text-sm leading-6 text-slate-400">The worker places one flat-stake Over 1.5 bet on the #1-ranked prediction that passes both filters in each round and can continue to later rounds while earlier bets await settlement.</span>
+                <span className="mt-1 block text-sm leading-6 text-slate-400">The worker places one Over 1.5 bet on the highest-ranked frozen prediction, then waits for settlement before the next bet so martingale sizing uses the actual result.</span>
               </span>
             </label>
 
             <label className="block text-sm text-slate-300">
-              Flat stake amount (₦)
+              Base stake amount (₦)
               <input
                 type="number"
                 min={1}
@@ -164,7 +164,7 @@ export default function AutoBettingPage() {
               </div>
               <div className="rounded-xl border border-slate-800 bg-slate-950/20 p-4 text-sm">
                 <p className="text-slate-500">Odds requirement</p>
-                <p className="mt-1 font-semibold text-white">Any valid odds</p>
+                <p className="mt-1 font-semibold text-white">At least 1.20</p>
               </div>
               <div className="rounded-xl border border-slate-800 bg-slate-950/20 p-4 text-sm">
                 <p className="text-slate-500">Profit target</p>
@@ -172,7 +172,7 @@ export default function AutoBettingPage() {
               </div>
               <div className="rounded-xl border border-slate-800 bg-slate-950/20 p-4 text-sm">
                 <p className="text-slate-500">Staking model</p>
-                <p className="mt-1 font-semibold text-white">Flat staking</p>
+                <p className="mt-1 font-semibold text-white">Odds-aware martingale</p>
               </div>
             </div>
 
@@ -259,8 +259,8 @@ export default function AutoBettingPage() {
       </section>
 
       <section className="panel mt-6 p-6">
-        <p className="eyebrow">Next qualifying bet</p>
-        {candidates.length === 0 ? <p className="mt-4 text-sm text-slate-400">No qualifying bet is currently ready. The worker is waiting for frozen predictions, a new season after a profit-target pause, or valid live market data.</p> : (
+        <p className="eyebrow">Next ranked bet</p>
+        {candidates.length === 0 ? <p className="mt-4 text-sm text-slate-400">No ranked frozen prediction is currently ready. The worker may be waiting for settlement, a complete frozen round, a new season after a profit-target pause, or valid live market data.</p> : (
           <div className="mt-4 space-y-4">
             {candidates.map((candidate) => (
               <div key={candidate.match_id} className="rounded-xl border border-slate-800 bg-slate-950/20 p-4">
@@ -268,8 +268,8 @@ export default function AutoBettingPage() {
                   <div>
                     <FixtureLabel matchId={candidate.match_id} home={candidate.home_team} away={candidate.away_team} kickoff={candidate.scheduled_at} />
                     <div className="mt-3 flex flex-wrap items-center gap-2">
-                      <span className="rounded-full border border-accent/30 bg-accent/10 px-2.5 py-1 text-[11px] font-semibold uppercase tracking-wider text-accent">Eligible #{candidate.decision_rank}</span>
-                      <span className="text-xs text-slate-400">{candidate.decision_basis === "market_difference" ? "Model-vs-market rank" : "Model probability rank"}</span>
+                      <span className="rounded-full border border-accent/30 bg-accent/10 px-2.5 py-1 text-[11px] font-semibold uppercase tracking-wider text-accent">Rank #{candidate.decision_rank}</span>
+                      <span className="text-xs text-slate-400">{candidate.decision_basis === "goal_market_difference" ? "Over 2.5 value rank" : "Model probability rank"}</span>
                       {typeof candidate.decision_market_difference === "number" && <span className="text-xs text-accent">+{percentage(candidate.decision_market_difference)} pp</span>}
                     </div>
                   </div>
@@ -279,7 +279,7 @@ export default function AutoBettingPage() {
                   <div><p className="text-slate-500">Round</p><p className="mt-1">Season {candidate.season_id} · Round {candidate.round}</p></div>
                   <div><p className="text-slate-500">Market</p><p className="mt-1 font-semibold text-white">Over 1.5 Goals</p></div>
                   <div><p className="text-slate-500">Stake</p><p className="mt-1 font-semibold text-white">{naira(candidate.stake_amount)}</p></div>
-                  <div><p className="text-slate-500">Odds requirement</p><p className="mt-1 font-semibold text-white">Any valid odds</p></div>
+                  <div><p className="text-slate-500">Odds requirement</p><p className="mt-1 font-semibold text-white">At least 1.20</p></div>
                 </div>
               </div>
             ))}

@@ -6,8 +6,9 @@ Phase 3 provides independent worker commands:
   shared provider request budget and adaptive polling plan.
 - `cmd/prediction-worker` performs provisional or explicitly frozen round
   generation using the production `dynamic_bayesian_team_strength` policy:
-  current-season model probabilities are compared with verified pre-cutoff
-  bookmaker-implied 1X2 probabilities as the market/value benchmark.
+  current-season model probabilities are stored with verified pre-cutoff
+  bookmaker markets; auto-betting ranks eligible rounds by the positive
+  Dynamic Bayesian Over 2.5-versus-bookmaker Over 2.5 difference.
 - `cmd/forward-settle` settles frozen predictions and records forward paper
   metrics.
 

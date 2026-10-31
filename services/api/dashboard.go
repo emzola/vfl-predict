@@ -4,6 +4,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"errors"
+	"math"
 	"net/http"
 	"sort"
 	"strconv"
@@ -64,37 +65,55 @@ type bookmakerView struct {
 	Overround       float64         `json:"overround"`
 }
 
+type goalMarketProbabilityView struct {
+	Over25  float64 `json:"over_2_5"`
+	Under25 float64 `json:"under_2_5"`
+}
+
+type bookmakerGoalMarketView struct {
+	MarketID            int64                     `json:"market_id"`
+	Specifiers          string                    `json:"specifiers"`
+	OverOdds            float64                   `json:"over_odds"`
+	UnderOdds           float64                   `json:"under_odds"`
+	Implied             goalMarketProbabilityView `json:"implied"`
+	ModelDifference     float64                   `json:"model_difference"`
+	Overround           float64                   `json:"overround"`
+	PointInTimeVerified bool                      `json:"point_in_time_verified"`
+	ObservationKind     string                    `json:"observation_kind"`
+}
+
 type predictionView struct {
-	PredictionRunID      string             `json:"prediction_run_id"`
-	PredictionRevisionID string             `json:"prediction_revision_id"`
-	MatchID              int64              `json:"match_id"`
-	SeasonID             string             `json:"season_id"`
-	Round                int                `json:"round"`
-	Fixture              fixtureView        `json:"fixture"`
-	Probability          probabilityView    `json:"probability"`
-	MostLikelyOutcome    string             `json:"most_likely_outcome"`
-	ModelVersion         string             `json:"model_version"`
-	Engine               string             `json:"engine,omitempty"`
-	EngineVersion        string             `json:"engine_version,omitempty"`
-	PredictionPolicy     string             `json:"prediction_policy,omitempty"`
-	Status               string             `json:"status"`
-	PredictionAsOf       time.Time          `json:"prediction_as_of"`
-	CutoffAt             time.Time          `json:"cutoff_at"`
-	EarliestKickoffAt    time.Time          `json:"earliest_kickoff_at"`
-	OddsObservedAt       *time.Time         `json:"odds_observed_at,omitempty"`
-	ProviderOddsTime     *time.Time         `json:"provider_odds_timestamp_at,omitempty"`
-	PointInTimeVerified  bool               `json:"point_in_time_verified"`
-	Eligible             bool               `json:"eligible"`
-	IneligibleReason     string             `json:"ineligible_reason,omitempty"`
-	CreatedAt            time.Time          `json:"created_at"`
-	Bookmaker            *bookmakerView     `json:"bookmaker,omitempty"`
-	Secondary            map[string]any     `json:"secondary,omitempty"`
-	SecondaryModel       string             `json:"secondary_model,omitempty"`
-	DynamicTeamStrength  map[string]any     `json:"dynamic_team_strength,omitempty"`
-	FeatureValues        map[string]float64 `json:"feature_values,omitempty"`
-	ActualOutcome        string             `json:"actual_outcome,omitempty"`
-	Correct              *bool              `json:"correct,omitempty"`
-	SettlementTrack      string             `json:"settlement_track,omitempty"`
+	PredictionRunID      string                   `json:"prediction_run_id"`
+	PredictionRevisionID string                   `json:"prediction_revision_id"`
+	MatchID              int64                    `json:"match_id"`
+	SeasonID             string                   `json:"season_id"`
+	Round                int                      `json:"round"`
+	Fixture              fixtureView              `json:"fixture"`
+	Probability          probabilityView          `json:"probability"`
+	MostLikelyOutcome    string                   `json:"most_likely_outcome"`
+	ModelVersion         string                   `json:"model_version"`
+	Engine               string                   `json:"engine,omitempty"`
+	EngineVersion        string                   `json:"engine_version,omitempty"`
+	PredictionPolicy     string                   `json:"prediction_policy,omitempty"`
+	Status               string                   `json:"status"`
+	PredictionAsOf       time.Time                `json:"prediction_as_of"`
+	CutoffAt             time.Time                `json:"cutoff_at"`
+	EarliestKickoffAt    time.Time                `json:"earliest_kickoff_at"`
+	OddsObservedAt       *time.Time               `json:"odds_observed_at,omitempty"`
+	ProviderOddsTime     *time.Time               `json:"provider_odds_timestamp_at,omitempty"`
+	PointInTimeVerified  bool                     `json:"point_in_time_verified"`
+	Eligible             bool                     `json:"eligible"`
+	IneligibleReason     string                   `json:"ineligible_reason,omitempty"`
+	CreatedAt            time.Time                `json:"created_at"`
+	Bookmaker            *bookmakerView           `json:"bookmaker,omitempty"`
+	BookmakerGoalMarket  *bookmakerGoalMarketView `json:"bookmaker_goal_market,omitempty"`
+	Secondary            map[string]any           `json:"secondary,omitempty"`
+	SecondaryModel       string                   `json:"secondary_model,omitempty"`
+	DynamicTeamStrength  map[string]any           `json:"dynamic_team_strength,omitempty"`
+	FeatureValues        map[string]float64       `json:"feature_values,omitempty"`
+	ActualOutcome        string                   `json:"actual_outcome,omitempty"`
+	Correct              *bool                    `json:"correct,omitempty"`
+	SettlementTrack      string                   `json:"settlement_track,omitempty"`
 }
 
 type predictionPayload struct {
@@ -108,6 +127,17 @@ type predictionPayload struct {
 		Implied   probabilityView `json:"implied"`
 		Overround float64         `json:"overround"`
 	} `json:"bookmaker"`
+	BookmakerGoalMarket *struct {
+		MarketID            int64                     `json:"market_id"`
+		Specifiers          string                    `json:"specifiers"`
+		OverOdds            float64                   `json:"over_odds"`
+		UnderOdds           float64                   `json:"under_odds"`
+		Implied             goalMarketProbabilityView `json:"implied"`
+		ModelDifference     float64                   `json:"model_difference"`
+		Overround           float64                   `json:"overround"`
+		PointInTimeVerified bool                      `json:"point_in_time_verified"`
+		ObservationKind     string                    `json:"observation_kind"`
+	} `json:"bookmaker_goal_market"`
 	Secondary           map[string]any     `json:"secondary"`
 	SecondaryModel      string             `json:"secondary_model"`
 	DynamicTeamStrength map[string]any     `json:"dynamic_team_strength"`
@@ -937,6 +967,22 @@ func applyPredictionPayload(item *predictionView, payload []byte) {
 		}
 	}
 	item.Secondary = decoded.Secondary
+	if decoded.BookmakerGoalMarket != nil {
+		item.BookmakerGoalMarket = &bookmakerGoalMarketView{
+			MarketID:            decoded.BookmakerGoalMarket.MarketID,
+			Specifiers:          decoded.BookmakerGoalMarket.Specifiers,
+			OverOdds:            decoded.BookmakerGoalMarket.OverOdds,
+			UnderOdds:           decoded.BookmakerGoalMarket.UnderOdds,
+			Implied:             decoded.BookmakerGoalMarket.Implied,
+			ModelDifference:     decoded.BookmakerGoalMarket.ModelDifference,
+			Overround:           decoded.BookmakerGoalMarket.Overround,
+			PointInTimeVerified: decoded.BookmakerGoalMarket.PointInTimeVerified,
+			ObservationKind:     decoded.BookmakerGoalMarket.ObservationKind,
+		}
+		if over25, ok := secondaryProbability(item.Secondary, "over_2_5"); ok && finiteDashboardValue(item.BookmakerGoalMarket.Implied.Over25) {
+			item.BookmakerGoalMarket.ModelDifference = over25 - item.BookmakerGoalMarket.Implied.Over25
+		}
+	}
 	item.SecondaryModel = decoded.SecondaryModel
 	item.DynamicTeamStrength = decoded.DynamicTeamStrength
 	if item.DynamicTeamStrength != nil {
@@ -946,6 +992,18 @@ func applyPredictionPayload(item *predictionView, payload []byte) {
 		item.Secondary["dynamic_team_strength"] = item.DynamicTeamStrength
 	}
 	item.FeatureValues = decoded.FeatureValues
+}
+
+func secondaryProbability(value map[string]any, key string) (float64, bool) {
+	if value == nil {
+		return 0, false
+	}
+	number, ok := value[key].(float64)
+	return number, ok && finiteDashboardValue(number)
+}
+
+func finiteDashboardValue(value float64) bool {
+	return !math.IsNaN(value) && !math.IsInf(value, 0)
 }
 
 func (s *Server) loadPredictionHistory(r *http.Request, limit, offset int) ([]predictionView, bool, error) {

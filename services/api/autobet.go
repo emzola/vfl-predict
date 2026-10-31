@@ -224,6 +224,7 @@ func (s *Server) autoBettingInternalPlaced(w http.ResponseWriter, r *http.Reques
 	var input struct {
 		MatchID      int64   `json:"match_id"`
 		QuotedOdds   float64 `json:"quoted_odds"`
+		StakeAmount  float64 `json:"stake_amount"`
 		BetReference string  `json:"bet_reference"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&input); err != nil {
@@ -234,13 +235,17 @@ func (s *Server) autoBettingInternalPlaced(w http.ResponseWriter, r *http.Reques
 		writeError(w, http.StatusBadRequest, "match_id must be positive")
 		return
 	}
-	if input.QuotedOdds <= 0 {
-		writeError(w, http.StatusBadRequest, "quoted odds must be positive")
+	if input.QuotedOdds < 1.20 {
+		writeError(w, http.StatusBadRequest, "quoted odds must be at least 1.20 for martingale staking")
 		return
 	}
 	service := autobet.NewService(s.DB)
 	service.Now = s.now
-	if err := service.RecordPlaced(r.Context(), seasonID, round, input.MatchID, input.QuotedOdds, input.BetReference); err != nil {
+	if input.StakeAmount < 0 {
+		writeError(w, http.StatusBadRequest, "stake amount must be non-negative")
+		return
+	}
+	if err := service.RecordPlaced(r.Context(), seasonID, round, input.MatchID, input.QuotedOdds, input.StakeAmount, input.BetReference); err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
