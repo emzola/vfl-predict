@@ -214,7 +214,7 @@ services:
     image: ${GHCR_IMAGE_PREFIX:?Set GHCR_IMAGE_PREFIX, for example ghcr.io/owner/repository}/vfl-worker:${RELEASE_SHA:?Set RELEASE_SHA to an immutable Git commit SHA}
     restart: unless-stopped
     entrypoint: ["/app/settlement-worker"]
-    command: ["-interval", "10s"]
+    command: ["-interval", "5s"]
     environment:
       DATABASE_URL: postgres://${POSTGRES_USER:-vfl}:${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in the VPS environment file}@postgres:5432/${POSTGRES_DB:-vfl}?sslmode=disable
       RUN_MIGRATIONS: "false"

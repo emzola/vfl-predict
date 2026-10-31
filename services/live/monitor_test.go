@@ -10,6 +10,9 @@ import (
 
 func TestPollPlanUsesFixedInterval(t *testing.T) {
 	cfg := DefaultPollConfig()
+	if cfg.ResultPollInterval != 5*time.Second {
+		t.Fatalf("result poll interval=%s want 5s", cfg.ResultPollInterval)
+	}
 	now := time.Date(2026, 10, 25, 12, 0, 0, 0, time.UTC)
 	for _, plan := range []PollPlan{
 		{Now: now, Config: cfg},

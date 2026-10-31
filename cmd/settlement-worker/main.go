@@ -51,11 +51,11 @@ func main() {
 			return
 		}
 		defer func() { _ = repo.ReleaseLease(context.Background(), "settlement-worker", ownerID, token) }()
+		_, autoBetErr := autoBetService.Settle(ctx)
 		report, settleErr := settler.Settle(ctx, "")
-		if settleErr != nil {
+		if autoBetErr != nil || settleErr != nil {
 			return
 		}
-		_, _ = autoBetService.Settle(ctx)
 		encoded, _ := json.Marshal(report)
 		fmt.Println(string(encoded))
 	}

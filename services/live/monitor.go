@@ -2,6 +2,7 @@ package live
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -13,13 +14,13 @@ import (
 	"bet9ja-vfl/services/autobet"
 	"bet9ja-vfl/services/ingest"
 	"bet9ja-vfl/services/provider"
-	"bet9ja-vfl/services/settlement"
 )
 
 // PollConfig follows the conservative defaults in specification section 6.2.
 // The shared ingest.ProviderClient budget remains the final request gate.
 type PollConfig struct {
 	PollInterval            time.Duration
+	ResultPollInterval      time.Duration
 	SeasonDiscoveryInterval time.Duration
 	FixtureInterval         time.Duration
 	UpcomingOddsInterval    time.Duration
@@ -38,6 +39,7 @@ type PollConfig struct {
 func DefaultPollConfig() PollConfig {
 	return PollConfig{
 		PollInterval:            5 * time.Second,
+		ResultPollInterval:      5 * time.Second,
 		SeasonDiscoveryInterval: 5 * time.Minute,
 		FixtureInterval:         2 * time.Minute,
 		UpcomingOddsInterval:    90 * time.Second,
@@ -58,6 +60,12 @@ func (c PollConfig) normalize() PollConfig {
 	defaults := DefaultPollConfig()
 	if c.PollInterval <= 0 {
 		c.PollInterval = defaults.PollInterval
+	}
+	if c.ResultPollInterval <= 0 {
+		c.ResultPollInterval = defaults.ResultPollInterval
+	}
+	if c.ResultPollInterval < 5*time.Second {
+		c.ResultPollInterval = 5 * time.Second
 	}
 	if c.SeasonDiscoveryInterval <= 0 {
 		c.SeasonDiscoveryInterval = defaults.SeasonDiscoveryInterval
@@ -180,8 +188,10 @@ type Monitor struct {
 	Config         PollConfig
 	ProviderConfig ingest.Config
 	Client         *ingest.ProviderClient
+	ResultClient   *ingest.ProviderClient
 	Repo           *ingest.Repository
 	Runner         *ingest.Runner
+	ResultRunner   *ingest.Runner
 	Now            func() time.Time
 	Circuit        *CircuitBreaker
 }
@@ -191,13 +201,22 @@ func NewMonitor(cfg PollConfig, client *ingest.ProviderClient, repo *ingest.Repo
 }
 
 func NewMonitorWithProviderConfig(cfg PollConfig, providerConfig ingest.Config, client *ingest.ProviderClient, repo *ingest.Repository) *Monitor {
+	return NewMonitorWithProviderClients(cfg, providerConfig, client, client, repo)
+}
+
+func NewMonitorWithProviderClients(cfg PollConfig, providerConfig ingest.Config, client, resultClient *ingest.ProviderClient, repo *ingest.Repository) *Monitor {
 	cfg = cfg.normalize()
+	if resultClient == nil {
+		resultClient = client
+	}
 	return &Monitor{
 		Config:         cfg,
 		ProviderConfig: providerConfig,
 		Client:         client,
+		ResultClient:   resultClient,
 		Repo:           repo,
 		Runner:         ingest.NewRunner(providerConfig, client, repo),
+		ResultRunner:   ingest.NewRunner(providerConfig, resultClient, repo),
 		Now:            time.Now,
 		Circuit:        NewCircuitBreaker(cfg.CircuitFailureThreshold, cfg.CircuitCooldown),
 	}
@@ -226,6 +245,20 @@ type PollReport struct {
 // of HTTP handlers and can be called by a background worker or a verification
 // command.
 func (m *Monitor) PollOnce(ctx context.Context) (PollReport, error) {
+	if m == nil || m.Client == nil || m.Repo == nil || m.Runner == nil {
+		return PollReport{}, errors.New("live monitor is not initialized")
+	}
+	report, err := m.pollPrimaryOnce(ctx)
+	if err != nil {
+		return report, err
+	}
+	if _, resultErr := m.PollResultsOnce(ctx); resultErr != nil {
+		report.Warnings = append(report.Warnings, fmt.Sprintf("results: %v", resultErr))
+	}
+	return report, nil
+}
+
+func (m *Monitor) pollPrimaryOnce(ctx context.Context) (PollReport, error) {
 	if m == nil || m.Client == nil || m.Repo == nil || m.Runner == nil {
 		return PollReport{}, errors.New("live monitor is not initialized")
 	}
@@ -328,23 +361,14 @@ func (m *Monitor) pollOnceLeased(ctx context.Context, now time.Time) (PollReport
 			return PollReport{}, err
 		}
 	}
-	resultWarnings := make([]string, 0, 1)
-	if err := m.refreshResultFixtures(ctx, cfg, current, now); err != nil {
-		// The result feed is supplementary. Keep the primary fixture/odds
-		// polling path healthy if it is temporarily unavailable.
-		resultWarnings = append(resultWarnings, fmt.Sprintf("results feed: %v", err))
-	}
-	if err := m.settleObservedResults(ctx); err != nil {
-		return PollReport{}, err
-	}
 	upcoming, kickoff := upcomingRounds(fixturesPayload.Matches, now)
 	if len(upcoming) == 0 {
-		return PollReport{SeasonID: current.ID.String(), FixtureCount: len(fixturesPayload.Matches), FirstKickoff: kickoff, ObservedAt: now, CacheObservations: cacheObservations, Warnings: resultWarnings}, nil
+		return PollReport{SeasonID: current.ID.String(), FixtureCount: len(fixturesPayload.Matches), FirstKickoff: kickoff, ObservedAt: now, CacheObservations: cacheObservations}, nil
 	}
 	if len(upcoming) > m.Config.FutureRounds {
 		upcoming = upcoming[:m.Config.FutureRounds]
 	}
-	report := PollReport{SeasonID: current.ID.String(), FixtureCount: len(fixturesPayload.Matches), UpcomingRounds: upcoming, FirstKickoff: kickoff, ObservedAt: now, CacheObservations: cacheObservations, Warnings: resultWarnings}
+	report := PollReport{SeasonID: current.ID.String(), FixtureCount: len(fixturesPayload.Matches), UpcomingRounds: upcoming, FirstKickoff: kickoff, ObservedAt: now, CacheObservations: cacheObservations}
 	for _, round := range upcoming {
 		oddsKey := fmt.Sprintf("stats_season_odds2/vf:season:%s/%d", current.ID, round)
 		oddsResponse, oddsRawID, oddsErr := m.Runner.FetchAndStore(ctx, "live_season_odds", oddsKey, cfg.LiveBaseURL, oddsKey, map[string]any{"season_id": current.ID.String(), "round": round})
@@ -414,34 +438,113 @@ func (m *Monitor) pollOnceLeased(ctx context.Context, now time.Time) (PollReport
 	return report, nil
 }
 
-func (m *Monitor) refreshResultFixtures(ctx context.Context, cfg ingest.Config, current provider.SeasonSummary, now time.Time) error {
+// PollResultsOnce gives the result feed its own leased, high-priority cycle.
+// It intentionally reads the current season from PostgreSQL so it can run
+// independently of the slower discovery/fixture/odds cycle.
+func (m *Monitor) PollResultsOnce(ctx context.Context) (PollReport, error) {
+	if m == nil || m.Repo == nil || m.Repo.DB == nil || m.ResultRunner == nil {
+		return PollReport{}, errors.New("live results monitor is not initialized")
+	}
+	now := m.now()
+	current, found, err := m.currentStoredSeason(ctx)
+	if err != nil {
+		return PollReport{}, err
+	}
+	if !found {
+		return PollReport{ObservedAt: now}, nil
+	}
+	ownerID := strings.TrimSpace(m.Config.OwnerID) + "-results"
+	leaseToken, acquired, err := m.Repo.AcquireLease(ctx, "live-results-monitor", ownerID, m.Config.LeaseTTL)
+	if err != nil {
+		return PollReport{}, err
+	}
+	if !acquired {
+		return PollReport{}, errors.New("live results monitor lease is held by another worker")
+	}
+	defer func() { _ = m.Repo.ReleaseLease(context.Background(), "live-results-monitor", ownerID, leaseToken) }()
+	executionID, err := m.Repo.StartJobExecution(ctx, "live-results-monitor", m.Config.WorkerName+"-results", 1, `{"scope":"season-results-and-auto-settlement"}`)
+	if err != nil {
+		return PollReport{}, err
+	}
+	report := PollReport{SeasonID: current.ID.String(), ObservedAt: now}
+	fixtureCount, pollErr := m.refreshResultFixturesWithRunner(ctx, m.providerConfig(), current, now, m.ResultRunner)
+	report.FixtureCount = fixtureCount
+	if pollErr != nil {
+		flag := true
+		_ = m.Repo.FinishJobExecution(ctx, executionID, "failed", "live_results_poll_failed", pollErr.Error(), &flag, fixtureCount, 0, `{"retriable":true}`)
+		return report, pollErr
+	}
+	if settleErr := m.settleObservedResults(ctx); settleErr != nil {
+		flag := true
+		_ = m.Repo.FinishJobExecution(ctx, executionID, "failed", "auto_bet_settlement_failed", settleErr.Error(), &flag, fixtureCount, 0, `{"retriable":true}`)
+		return report, settleErr
+	}
+	_ = m.Repo.FinishJobExecution(ctx, executionID, "succeeded", "", "", nil, fixtureCount, 0, `{}`)
+	return report, nil
+}
+
+func (m *Monitor) currentStoredSeason(ctx context.Context) (provider.SeasonSummary, bool, error) {
+	var seasonID string
+	var tournamentID int64
+	err := m.Repo.DB.QueryRowContext(ctx, `
+SELECT season_id, tournament_id
+FROM seasons
+WHERE current_flag = true
+ORDER BY last_seen_at DESC
+LIMIT 1`).Scan(&seasonID, &tournamentID)
+	if errors.Is(err, sql.ErrNoRows) {
+		return provider.SeasonSummary{}, false, nil
+	}
+	if err != nil {
+		return provider.SeasonSummary{}, false, err
+	}
+	return provider.SeasonSummary{
+		ID:           provider.SeasonID(seasonID),
+		TournamentID: provider.TournamentID(tournamentID),
+		Current:      true,
+	}, true, nil
+}
+
+func (m *Monitor) providerConfig() ingest.Config {
+	cfg := m.ProviderConfig
+	if cfg.LiveBaseURL == "" {
+		cfg = ingest.DefaultConfig()
+	}
+	return cfg
+}
+
+func (m *Monitor) refreshResultFixturesWithRunner(ctx context.Context, cfg ingest.Config, current provider.SeasonSummary, now time.Time, runner *ingest.Runner) (int, error) {
+	if runner == nil {
+		return 0, errors.New("results runner is not initialized")
+	}
+	runner.Config = cfg
 	resultsBaseURL := fixtureResultsBaseURL(cfg)
 	fixtureKey := fmt.Sprintf("stats_season_fixtures2/%s", current.ID)
 	requestKey := "results:" + fixtureKey
-	response, rawID, err := m.Runner.FetchAndStore(ctx, "live_season_results", requestKey, resultsBaseURL, fixtureKey, map[string]any{"season_id": current.ID.String()})
+	response, rawID, err := runner.FetchAndStore(ctx, "live_season_results", requestKey, resultsBaseURL, fixtureKey, map[string]any{"season_id": current.ID.String()})
 	if err != nil {
-		return err
+		return 0, err
 	}
 	if response == nil || strings.TrimSpace(rawID) == "" {
-		return errors.New("season results did not produce a raw payload")
+		return 0, errors.New("season results did not produce a raw payload")
 	}
 	if err := m.Repo.SaveObservation(ctx, "live_season_results", requestKey, response, rawID, response.CacheReused, current.ID.String(), 0, "accepted", `{}`); err != nil {
-		return err
+		return 0, err
 	}
 	payload, err := provider.ParseFixtures(response.Body)
 	if err != nil {
 		_ = m.Repo.SaveObservation(ctx, "live_season_results", requestKey, response, rawID, false, current.ID.String(), 0, "invalid", fmt.Sprintf(`{"error":%q}`, err.Error()))
-		return err
+		return 0, err
 	}
 	if payload.Season.ID != current.ID || payload.Season.TournamentID != current.TournamentID {
-		return fmt.Errorf("results identity %s/%s does not match current season %s/%s", payload.Season.ID, payload.Season.TournamentID, current.ID, current.TournamentID)
+		return 0, fmt.Errorf("results identity %s/%s does not match current season %s/%s", payload.Season.ID, payload.Season.TournamentID, current.ID, current.TournamentID)
 	}
 	for _, fixture := range payload.Matches {
 		if err := m.Repo.UpsertFixtureResults(ctx, fixture, rawID, now, 120*time.Second); err != nil {
-			return fmt.Errorf("update result for match %s: %w", fixture.MatchID, err)
+			return 0, fmt.Errorf("update result for match %s: %w", fixture.MatchID, err)
 		}
 	}
-	return nil
+	return len(payload.Matches), nil
 }
 
 func fixtureResultsBaseURL(cfg ingest.Config) string {
@@ -558,24 +661,48 @@ func (m *Monitor) settleObservedResults(ctx context.Context) error {
 	if m == nil || m.Repo == nil || m.Repo.DB == nil {
 		return errors.New("live monitor repository database is not initialized")
 	}
-	settler := settlement.NewSettler(m.Repo.DB)
-	if _, err := settler.Settle(ctx, ""); err != nil {
-		return err
-	}
 	autoBetService := autobet.NewService(m.Repo.DB)
 	_, err := autoBetService.Settle(ctx)
 	return err
 }
 
-// Run loops independently of dashboard requests. The monitor uses the
-// adaptive plan after each cycle and stops promptly on context cancellation.
+// runPriorityResults keeps result refresh and auto-bet settlement independent
+// from the slower fixture/odds cycle. The request scheduler gives this loop
+// the next available upstream slot whenever it is waiting.
+func (m *Monitor) runPriorityResults(ctx context.Context) {
+	interval := m.Config.normalize().ResultPollInterval
+	for {
+		_, _ = m.PollResultsOnce(ctx)
+		timer := time.NewTimer(interval)
+		select {
+		case <-ctx.Done():
+			timer.Stop()
+			return
+		case <-timer.C:
+		}
+	}
+}
+
+// Run loops independently of dashboard requests. Results are refreshed by a
+// dedicated priority loop while the primary monitor keeps the prediction
+// fixture and odds path intact.
 func (m *Monitor) Run(ctx context.Context) error {
 	if m == nil {
 		return errors.New("live monitor is nil")
 	}
+	resultsCtx, cancelResults := context.WithCancel(ctx)
+	resultsDone := make(chan struct{})
+	go func() {
+		defer close(resultsDone)
+		m.runPriorityResults(resultsCtx)
+	}()
+	defer func() {
+		cancelResults()
+		<-resultsDone
+	}()
 	pollInterval := m.Config.normalize().PollInterval
 	for {
-		_, _ = m.PollOnce(ctx)
+		_, _ = m.pollPrimaryOnce(ctx)
 		if ctx.Err() != nil {
 			return ctx.Err()
 		}

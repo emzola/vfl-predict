@@ -47,12 +47,15 @@ func main() {
 	}
 	repo := ingest.NewRepository(db)
 	client := ingest.NewProviderClient(cfg, nil)
+	resultClient := ingest.NewProviderClient(cfg, nil)
 	if cfg.ConnectivityEnabled {
-		ingest.AttachDatabaseRequestGate(client, repo, cfg.RequestSpacing)
+		scheduler := ingest.NewPriorityProviderRequestScheduler(repo, "bet9ja-global", cfg.RequestSpacing)
+		scheduler.Attach(client, false)
+		scheduler.Attach(resultClient, true)
 	}
 	pollConfig := live.DefaultPollConfig()
 	pollConfig.OwnerID = fmt.Sprintf("live-monitor-%d", os.Getpid())
-	monitor := live.NewMonitorWithProviderConfig(pollConfig, cfg, client, repo)
+	monitor := live.NewMonitorWithProviderClients(pollConfig, cfg, client, resultClient, repo)
 	if runOnce {
 		if !cfg.ConnectivityEnabled {
 			fatal("provider connectivity is disabled; use -allow-network for an authorized read-only run")
