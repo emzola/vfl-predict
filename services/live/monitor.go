@@ -37,7 +37,7 @@ type PollConfig struct {
 
 func DefaultPollConfig() PollConfig {
 	return PollConfig{
-		PollInterval:            10 * time.Second,
+		PollInterval:            5 * time.Second,
 		SeasonDiscoveryInterval: 5 * time.Minute,
 		FixtureInterval:         2 * time.Minute,
 		UpcomingOddsInterval:    90 * time.Second,

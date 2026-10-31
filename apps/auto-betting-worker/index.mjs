@@ -8,7 +8,7 @@ import {
 } from "./bet9ja-api.mjs";
 
 const workerId = process.env.AUTOBET_WORKER_ID || `${os.hostname()}-${process.pid}`;
-const intervalMs = numberEnv("AUTOBET_INTERVAL_SECONDS", 10, 2) * 1000;
+const intervalMs = numberEnv("AUTOBET_INTERVAL_SECONDS", 5, 5) * 1000;
 const internalBaseURL = (process.env.INTERNAL_API_BASE_URL || "http://api:8090").replace(/\/+$/, "");
 const internalToken = process.env.INTERNAL_API_TOKEN || "";
 const dryRun = /^true$/i.test(process.env.AUTOBET_DRY_RUN || "false");

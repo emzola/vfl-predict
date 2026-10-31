@@ -145,6 +145,9 @@ type WorkerTask struct {
 	Runtime       Runtime        `json:"runtime"`
 	SeasonSummary *SeasonSummary `json:"season_summary,omitempty"`
 	Bets          []BetTask      `json:"bets,omitempty"`
+	// Prepared is a preview of the next rank-one frozen bet while the current
+	// bet is awaiting settlement. It is never executable until Status is ready.
+	Prepared *BetTask `json:"prepared,omitempty"`
 	// Bets contains at most one entry: the highest-ranked frozen prediction for
 	// the selected round. Candidate and Selection remain rollout-compatible
 	// aliases for that entry.
@@ -497,6 +500,11 @@ func (s *Service) NextTask(ctx context.Context) (*WorkerTask, error) {
 		return task, nil
 	}
 	if summary.PendingSettlements > 0 {
+		prepared, prepareErr := s.prepareNextBet(ctx, seasonID, settings, summary)
+		if prepareErr != nil {
+			return nil, prepareErr
+		}
+		task.Prepared = prepared
 		task.Status = "awaiting_settlement"
 		return task, nil
 	}
@@ -533,6 +541,22 @@ func (s *Service) NextTask(ctx context.Context) (*WorkerTask, error) {
 	task.Selection = task.Bets[0].Selection
 	task.Status = "ready"
 	return task, nil
+}
+
+func (s *Service) prepareNextBet(ctx context.Context, seasonID string, settings Settings, summary SeasonSummary) (*BetTask, error) {
+	candidates, err := s.nextCandidatesPreview(ctx, seasonID, settings, summary)
+	if err != nil || len(candidates) == 0 {
+		return nil, err
+	}
+	candidateCopy := candidates[0]
+	// The result is not known yet, so there is intentionally no projected
+	// martingale stake in the preview.
+	candidateCopy.StakeAmount = 0
+	selection, err := s.loadBetSelection(ctx, candidateCopy.MatchID)
+	if err != nil {
+		return nil, err
+	}
+	return &BetTask{Candidate: &candidateCopy, Selection: selection}, nil
 }
 
 func (s *Service) loadBetSelection(ctx context.Context, matchID int64) (*BetSelection, error) {
@@ -714,7 +738,9 @@ func (s *Service) Settle(ctx context.Context) (SettlementReport, error) {
 	}
 	rows, err := s.DB.QueryContext(ctx, `
 SELECT r.auto_betting_round_id::text, r.season_id, r.round_no, r.stake_amount, r.quoted_odds,
-       f.status, f.result_home, f.result_away
+       f.status, f.result_home, f.result_away,
+       f.half_time_home, f.half_time_away, f.full_time_home, f.full_time_away,
+       f.in_live_score
 FROM auto_betting_rounds r
 JOIN fixtures f ON f.match_id = r.match_id
 WHERE r.status = 'placed'
@@ -728,8 +754,10 @@ ORDER BY r.season_id, r.round_no`)
 		var id, seasonID, fixtureStatus string
 		var round int
 		var stake, odds float64
-		var homeScore, awayScore sql.NullInt64
-		if err := rows.Scan(&id, &seasonID, &round, &stake, &odds, &fixtureStatus, &homeScore, &awayScore); err != nil {
+		var homeScore, awayScore, halfTimeHome, halfTimeAway, fullTimeHome, fullTimeAway sql.NullInt64
+		var inLiveScore bool
+		if err := rows.Scan(&id, &seasonID, &round, &stake, &odds, &fixtureStatus, &homeScore, &awayScore,
+			&halfTimeHome, &halfTimeAway, &fullTimeHome, &fullTimeAway, &inLiveScore); err != nil {
 			return report, err
 		}
 		if strings.EqualFold(fixtureStatus, "canceled") {
@@ -740,12 +768,19 @@ ORDER BY r.season_id, r.round_no`)
 			report.VoidCount++
 			continue
 		}
-		if !homeScore.Valid || !awayScore.Valid {
+		outcome, score, settled := over15SettlementDecision(
+			fixtureStatus,
+			inLiveScore,
+			nullableMatchScore(homeScore, awayScore),
+			nullableMatchScore(halfTimeHome, halfTimeAway),
+			nullableMatchScore(fullTimeHome, fullTimeAway),
+		)
+		if !settled || score == nil {
 			continue
 		}
-		home := int(homeScore.Int64)
-		away := int(awayScore.Int64)
-		if home+away > 1 {
+		home := score.Home
+		away := score.Away
+		if outcome == "won" {
 			returnValue := roundMoney(stake * odds)
 			profit := roundMoney(returnValue - stake)
 			if err := s.finalizeRound(ctx, id, "won", stake, returnValue, profit, &home, &away); err != nil {
@@ -786,6 +821,36 @@ SET status = $2,
     updated_at = $5
 WHERE auto_betting_round_id = $1::uuid AND status = 'placed'`, id, status, realizedReturn, profit, s.now(), home, away)
 	return err
+}
+
+type matchScore struct {
+	Home int
+	Away int
+}
+
+func nullableMatchScore(home, away sql.NullInt64) *matchScore {
+	if !home.Valid || !away.Valid {
+		return nil
+	}
+	return &matchScore{Home: int(home.Int64), Away: int(away.Int64)}
+}
+
+func over15SettlementDecision(fixtureStatus string, inLiveScore bool, current, halftime, fulltime *matchScore) (string, *matchScore, bool) {
+	if fulltime != nil {
+		if fulltime.Home+fulltime.Away > 1 {
+			return "won", fulltime, true
+		}
+		return "lost", fulltime, true
+	}
+	for _, score := range []*matchScore{current, halftime} {
+		if score != nil && score.Home+score.Away > 1 {
+			return "won", score, true
+		}
+	}
+	if inLiveScore || !strings.EqualFold(fixtureStatus, "completed") || current == nil {
+		return "", nil, false
+	}
+	return "lost", current, true
 }
 
 func (s *Service) validateCandidateAction(ctx context.Context, seasonID string, round int, matchID int64) (Settings, SeasonSummary, *Candidate, error) {
@@ -832,6 +897,13 @@ SELECT EXISTS (
 
 func (s *Service) nextCandidates(ctx context.Context, seasonID string, settings Settings, summary SeasonSummary) ([]Candidate, error) {
 	if !settings.Enabled || summary.Paused || summary.PendingSettlements > 0 {
+		return []Candidate{}, nil
+	}
+	return s.nextCandidatesPreview(ctx, seasonID, settings, summary)
+}
+
+func (s *Service) nextCandidatesPreview(ctx context.Context, seasonID string, settings Settings, summary SeasonSummary) ([]Candidate, error) {
+	if !settings.Enabled || summary.Paused {
 		return []Candidate{}, nil
 	}
 	round, err := s.nextEligibleRound(ctx, seasonID, summary.NextStake)

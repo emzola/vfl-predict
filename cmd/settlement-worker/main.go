@@ -18,7 +18,7 @@ import (
 func main() {
 	databaseURL := os.Getenv("DATABASE_URL")
 	migrationsDir := "db/migrations"
-	interval := 10 * time.Second
+	interval := 5 * time.Second
 	runOnce := false
 	flag.StringVar(&databaseURL, "database-url", databaseURL, "PostgreSQL connection URL")
 	flag.StringVar(&migrationsDir, "migrations-dir", migrationsDir, "directory containing SQL migrations")
@@ -28,8 +28,8 @@ func main() {
 	if databaseURL == "" {
 		fatal("set DATABASE_URL or -database-url")
 	}
-	if interval < 10*time.Second {
-		fatal("settlement interval must be at least 10 seconds")
+	if interval < 5*time.Second {
+		fatal("settlement interval must be at least 5 seconds")
 	}
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()

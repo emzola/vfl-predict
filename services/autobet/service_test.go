@@ -162,6 +162,25 @@ func TestRoundMoneyRoundsToTwoDecimals(t *testing.T) {
 	}
 }
 
+func TestOver15SettlementDecisionSettlesConfirmedWinsEarly(t *testing.T) {
+	status, score, settled := over15SettlementDecision("unknown", true, &matchScore{Home: 2, Away: 0}, nil, nil)
+	if !settled || status != "won" || score == nil || score.Home != 2 || score.Away != 0 {
+		t.Fatalf("early win decision=(%s, %+v, %v)", status, score, settled)
+	}
+}
+
+func TestOver15SettlementDecisionWaitsForLossConfirmation(t *testing.T) {
+	status, score, settled := over15SettlementDecision("unknown", true, &matchScore{Home: 1, Away: 0}, nil, nil)
+	if settled || status != "" || score != nil {
+		t.Fatalf("unfinished loss decision=(%s, %+v, %v)", status, score, settled)
+	}
+
+	status, score, settled = over15SettlementDecision("completed", false, &matchScore{Home: 1, Away: 0}, nil, nil)
+	if !settled || status != "lost" || score == nil {
+		t.Fatalf("completed loss decision=(%s, %+v, %v)", status, score, settled)
+	}
+}
+
 func TestDetermineMartingaleStake(t *testing.T) {
 	tests := []struct {
 		name          string
