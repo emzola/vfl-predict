@@ -262,7 +262,6 @@ func (m *Monitor) pollOnceLeased(ctx context.Context, now time.Time) (PollReport
 	if cfg.LiveBaseURL == "" {
 		cfg = ingest.DefaultConfig()
 	}
-	resultsBaseURL := fixtureResultsBaseURL(cfg)
 	// Runner uses the same ProviderClient budget and repository cache path as
 	// historical ingestion. Its config is replaced below for environment/base
 	// URL compatibility when callers constructed a custom client.
@@ -300,15 +299,11 @@ func (m *Monitor) pollOnceLeased(ctx context.Context, now time.Time) (PollReport
 		return PollReport{}, err
 	}
 	fixtureKey := fmt.Sprintf("stats_season_fixtures2/%s", current.ID)
-	// Keep the results-feed cache namespace separate from any older fixture
-	// observations made against the previous live-feed host. Validators such as
-	// ETags are host-specific and must not be reused across those sources.
-	fixtureRequestKey := "results:" + fixtureKey
-	fixtureResponse, fixtureRawID, err := m.Runner.FetchAndStore(ctx, "live_season_fixtures", fixtureRequestKey, resultsBaseURL, fixtureKey, map[string]any{"season_id": current.ID.String()})
+	fixtureResponse, fixtureRawID, err := m.Runner.FetchAndStore(ctx, "live_season_fixtures", fixtureKey, cfg.LiveBaseURL, fixtureKey, map[string]any{"season_id": current.ID.String()})
 	if err != nil {
 		return PollReport{SeasonID: current.ID.String(), ObservedAt: now}, err
 	}
-	if err := m.Repo.SaveObservation(ctx, "live_season_fixtures", fixtureRequestKey, fixtureResponse, fixtureRawID, fixtureResponse.CacheReused, current.ID.String(), 0, "accepted", `{}`); err != nil {
+	if err := m.Repo.SaveObservation(ctx, "live_season_fixtures", fixtureKey, fixtureResponse, fixtureRawID, fixtureResponse.CacheReused, current.ID.String(), 0, "accepted", `{}`); err != nil {
 		return PollReport{}, err
 	}
 	if fixtureResponse.CacheReused {
@@ -316,7 +311,7 @@ func (m *Monitor) pollOnceLeased(ctx context.Context, now time.Time) (PollReport
 	}
 	fixturesPayload, err := provider.ParseFixtures(fixtureResponse.Body)
 	if err != nil {
-		_ = m.Repo.SaveObservation(ctx, "live_season_fixtures", fixtureRequestKey, fixtureResponse, fixtureRawID, false, current.ID.String(), 0, "invalid", fmt.Sprintf(`{"error":%q}`, err.Error()))
+		_ = m.Repo.SaveObservation(ctx, "live_season_fixtures", fixtureKey, fixtureResponse, fixtureRawID, false, current.ID.String(), 0, "invalid", fmt.Sprintf(`{"error":%q}`, err.Error()))
 		return PollReport{}, err
 	}
 	if fixturesPayload.Season.ID != current.ID || fixturesPayload.Season.TournamentID != current.TournamentID {
@@ -412,18 +407,6 @@ func (m *Monitor) pollOnceLeased(ctx context.Context, now time.Time) (PollReport
 	}
 	return report, nil
 }
-
-func fixtureResultsBaseURL(cfg ingest.Config) string {
-	if value := strings.TrimSpace(cfg.ResultsBaseURL); value != "" {
-		return value
-	}
-	// Preserve compatibility for callers that provide only a live base URL.
-	if value := strings.TrimSpace(cfg.LiveBaseURL); value != "" {
-		return value
-	}
-	return ingest.DefaultResultsBaseURL
-}
-
 func currentSeason(discovery provider.SeasonDiscovery, now time.Time) (provider.SeasonSummary, error) {
 	var flagged *provider.SeasonSummary
 	for index := range discovery.Seasons {

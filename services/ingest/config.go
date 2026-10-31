@@ -12,7 +12,6 @@ import (
 const (
 	DefaultHistoricalBaseURL = "https://vgls-vs001.akamaized.net/vfl/feeds/?/bet9javirtuals/en/America:Los_Angeles/gismo/"
 	DefaultLiveBaseURL       = "https://vglslive-vs001.akamaized.net/vfl/feeds/?/bet9ja/en/Europe:Berlin/gismo/"
-	DefaultResultsBaseURL    = "https://vgls-vs001.akamaized.net/vfl/feeds/?/bet9javirtuals/en/Africa:Johannesburg/gismo/"
 	DefaultTournamentID      = provider.TournamentID(14149)
 	ParserVersion            = "phase3-provider-parser-2026-10-25"
 	SchemaVersion            = "phase3-observed-2026-10-25"
@@ -21,7 +20,6 @@ const (
 type Config struct {
 	HistoricalBaseURL         string
 	LiveBaseURL               string
-	ResultsBaseURL            string
 	TournamentID              provider.TournamentID
 	RequestSpacing            time.Duration
 	RequestTimeout            time.Duration
@@ -38,7 +36,6 @@ func DefaultConfig() Config {
 	return Config{
 		HistoricalBaseURL:         DefaultHistoricalBaseURL,
 		LiveBaseURL:               DefaultLiveBaseURL,
-		ResultsBaseURL:            DefaultResultsBaseURL,
 		TournamentID:              DefaultTournamentID,
 		RequestSpacing:            10 * time.Second,
 		RequestTimeout:            30 * time.Second,
@@ -59,9 +56,6 @@ func ConfigFromEnv() Config {
 	}
 	if value := strings.TrimSpace(os.Getenv("BET9JA_LIVE_BASE_URL")); value != "" {
 		cfg.LiveBaseURL = value
-	}
-	if value := strings.TrimSpace(os.Getenv("BET9JA_RESULTS_BASE_URL")); value != "" {
-		cfg.ResultsBaseURL = value
 	}
 	if value := strings.TrimSpace(os.Getenv("BET9JA_TOURNAMENT_ID")); value != "" {
 		if parsed, err := strconv.ParseUint(value, 10, 64); err == nil && parsed > 0 {
