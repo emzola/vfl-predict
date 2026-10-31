@@ -13,12 +13,13 @@ import (
 )
 
 const (
-	primaryKey      = "primary"
-	marketKey       = "over_1_5"
-	runtimeState    = "disabled"
-	minimumOdds     = 1.20
-	selectionRule   = "highest_ranked_frozen_prediction"
-	stakingStrategy = "odds_aware_martingale_settlement_gated"
+	primaryKey                 = "primary"
+	marketKey                  = "over_1_5"
+	runtimeState               = "disabled"
+	minimumOdds                = 1.20
+	postRound25ProfitGateRound = 25
+	selectionRule              = "highest_ranked_frozen_prediction"
+	stakingStrategy            = "odds_aware_martingale_settlement_gated"
 )
 
 type Service struct {
@@ -1222,6 +1223,7 @@ WHERE runtime_key = $1`, primaryKey).Scan(&runtime.State, &workerID, &seasonID, 
 
 func (s *Service) loadSeasonSummary(ctx context.Context, seasonID string, settings Settings) (SeasonSummary, error) {
 	summary := SeasonSummary{SeasonID: seasonID, ProfitTarget: settings.ProfitTarget}
+	var completedRound25 int
 	err := s.DB.QueryRowContext(ctx, `
 SELECT
     COALESCE(sum(stake_amount) FILTER (WHERE status IN ('placed', 'won', 'lost', 'void')), 0)::double precision,
@@ -1231,9 +1233,10 @@ SELECT
     count(*) FILTER (WHERE status = 'won')::integer,
     count(*) FILTER (WHERE status = 'lost')::integer,
     count(*) FILTER (WHERE status = 'skipped')::integer,
-    count(*) FILTER (WHERE status = 'placed')::integer
+    count(*) FILTER (WHERE status = 'placed')::integer,
+    count(*) FILTER (WHERE round_no = $2 AND status IN ('won', 'lost', 'void', 'skipped'))::integer
 FROM auto_betting_rounds
-WHERE season_id = $1`, seasonID).Scan(&summary.TotalStaked, &summary.TotalReturned, &summary.TotalProfit, &summary.BetsPlaced, &summary.BetsWon, &summary.BetsLost, &summary.BetsSkipped, &summary.PendingSettlements)
+WHERE season_id = $1`, seasonID, postRound25ProfitGateRound).Scan(&summary.TotalStaked, &summary.TotalReturned, &summary.TotalProfit, &summary.BetsPlaced, &summary.BetsWon, &summary.BetsLost, &summary.BetsSkipped, &summary.PendingSettlements, &completedRound25)
 	if err != nil {
 		return SeasonSummary{}, err
 	}
@@ -1259,8 +1262,15 @@ WHERE season_id = $1
 	if summary.ProfitTargetReached {
 		summary.Paused = true
 		summary.PauseReason = fmt.Sprintf("Season profit target of %.2f naira reached", settings.ProfitTarget)
+	} else if postRound25ProfitPause(completedRound25 > 0, summary.TotalProfit) {
+		summary.Paused = true
+		summary.PauseReason = "Season is profitable after round 25; auto betting is paused for the rest of the season."
 	}
 	return summary, nil
+}
+
+func postRound25ProfitPause(round25Completed bool, totalProfit float64) bool {
+	return round25Completed && totalProfit > 0
 }
 
 func (s *Service) loadUnrecoveredLoss(ctx context.Context, seasonID string) (float64, error) {

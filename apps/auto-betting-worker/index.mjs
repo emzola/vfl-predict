@@ -204,6 +204,7 @@ async function handleTask(task) {
     if (!candidate) continue;
     if (!bet?.selection) {
       transientError = `No current live Over 1.5 selection was available for match ${candidate.match_id}.`;
+      await recordSkippedBet(candidate, transientError);
       continue;
     }
 
@@ -227,14 +228,7 @@ async function handleTask(task) {
       throw error;
     }
     if (result.action === "skip") {
-      await apiRequest(`/internal/v1/auto-betting/rounds/${encodeURIComponent(candidate.season_id)}/${candidate.round}/skip`, {
-        method: "POST",
-        body: JSON.stringify({
-          match_id: candidate.match_id,
-          reason: result.reason,
-          observed_odds: typeof result.observedOdds === "number" ? result.observedOdds : undefined,
-        }),
-      });
+      await recordSkippedBet(candidate, result.reason, result.observedOdds);
       continue;
     }
 
@@ -267,6 +261,17 @@ async function handleTask(task) {
     last_login_at: provider.lastLoginAt || undefined,
     last_error: transientError,
     last_heartbeat_at: new Date().toISOString(),
+  });
+}
+
+async function recordSkippedBet(candidate, reason, observedOdds) {
+  await apiRequest(`/internal/v1/auto-betting/rounds/${encodeURIComponent(candidate.season_id)}/${candidate.round}/skip`, {
+    method: "POST",
+    body: JSON.stringify({
+      match_id: candidate.match_id,
+      reason,
+      observed_odds: typeof observedOdds === "number" ? observedOdds : undefined,
+    }),
   });
 }
 

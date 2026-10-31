@@ -272,3 +272,25 @@ func TestDetermineMartingaleStakeRejectsOddsBelowMinimum(t *testing.T) {
 		t.Fatal("expected odds below 1.20 to be rejected")
 	}
 }
+
+func TestPostRound25ProfitGate(t *testing.T) {
+	tests := []struct {
+		name             string
+		round25Completed bool
+		profit           float64
+		wantPause        bool
+	}{
+		{name: "round 25 is still pending", round25Completed: false, profit: 25, wantPause: false},
+		{name: "completed season is exactly even", round25Completed: true, profit: 0, wantPause: false},
+		{name: "completed season is still losing", round25Completed: true, profit: -10, wantPause: false},
+		{name: "round 25 was skipped and season is profitable", round25Completed: true, profit: 10, wantPause: true},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			got := postRound25ProfitPause(tc.round25Completed, tc.profit)
+			if got != tc.wantPause {
+				t.Fatalf("post-round-25 pause=%t want %t", got, tc.wantPause)
+			}
+		})
+	}
+}
