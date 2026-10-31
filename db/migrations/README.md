@@ -59,7 +59,8 @@ model's checkpoints, shadow runs, and registry-selection tables. The normal
 production deployment runs replay, shadow, and approval gates before selecting
 the model; it does not bypass them.
 
-`016_phase7_flat_multi_betting.sql` changes the auto-betting ledger to record
-decisions per fixture, enabling multiple qualifying bets in one frozen round.
-Auto betting uses a flat stake, accepts any valid Over 1.5 odds, and does not
-wait for earlier bets to settle before processing later frozen rounds.
+`016_phase7_flat_multi_betting.sql` updates the auto-betting ledger for
+fixture-level compatibility while the active selection logic chooses only the
+top-ranked qualifying prediction per frozen round. Auto betting uses a flat
+stake, accepts any valid Over 1.5 odds, and does not wait for earlier bets to
+settle before processing later frozen rounds.

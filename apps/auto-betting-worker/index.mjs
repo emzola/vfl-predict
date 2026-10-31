@@ -115,7 +115,7 @@ async function main() {
 }
 
 function taskBets(task) {
-  if (Array.isArray(task?.bets)) return task.bets;
+  if (Array.isArray(task?.bets)) return task.bets.slice(0, 1);
   if (task?.candidate) return [{ candidate: task.candidate, selection: task.selection }];
   return [];
 }

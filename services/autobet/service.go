@@ -131,8 +131,8 @@ type DashboardState struct {
 	CurrentSeason  string         `json:"current_season_id,omitempty"`
 	SeasonSummary  *SeasonSummary `json:"season_summary,omitempty"`
 	NextCandidates []Candidate    `json:"next_candidates,omitempty"`
-	// NextCandidate remains populated for older dashboard clients. New clients
-	// should use NextCandidates because a round can contain multiple bets.
+	// NextCandidate remains populated for older dashboard clients. NextCandidates
+	// contains at most the single top-ranked prediction for the next round.
 	NextCandidate *Candidate    `json:"next_candidate,omitempty"`
 	RecentRounds  []RoundRecord `json:"recent_rounds"`
 }
@@ -144,8 +144,9 @@ type WorkerTask struct {
 	Runtime       Runtime        `json:"runtime"`
 	SeasonSummary *SeasonSummary `json:"season_summary,omitempty"`
 	Bets          []BetTask      `json:"bets,omitempty"`
-	// Candidate and Selection expose the first entry for rollout compatibility;
-	// workers should process Bets so every qualifying fixture is handled.
+	// Bets contains at most one entry: the top-ranked qualifying prediction for
+	// the selected round. Candidate and Selection remain rollout-compatible
+	// aliases for that entry.
 	Candidate *Candidate    `json:"candidate,omitempty"`
 	Selection *BetSelection `json:"selection,omitempty"`
 }
@@ -464,15 +465,13 @@ func (s *Service) NextTask(ctx context.Context) (*WorkerTask, error) {
 	if len(candidates) == 0 {
 		return task, nil
 	}
-	for index := range candidates {
-		candidate := candidates[index]
-		selection, selectionErr := s.loadBetSelection(ctx, candidate.MatchID)
-		if selectionErr != nil {
-			return nil, selectionErr
-		}
-		candidateCopy := candidate
-		task.Bets = append(task.Bets, BetTask{Candidate: &candidateCopy, Selection: selection})
+	candidate := candidates[0]
+	selection, selectionErr := s.loadBetSelection(ctx, candidate.MatchID)
+	if selectionErr != nil {
+		return nil, selectionErr
 	}
+	candidateCopy := candidate
+	task.Bets = append(task.Bets, BetTask{Candidate: &candidateCopy, Selection: selection})
 	task.Candidate = task.Bets[0].Candidate
 	task.Selection = task.Bets[0].Selection
 	task.Status = "ready"
@@ -733,12 +732,12 @@ func (s *Service) validateCandidateAction(ctx context.Context, seasonID string, 
 SELECT EXISTS (
     SELECT 1
     FROM auto_betting_rounds
-    WHERE season_id = $1 AND round_no = $2 AND match_id = $3
-)`, seasonID, round, matchID).Scan(&exists); err != nil {
+    WHERE season_id = $1 AND round_no = $2
+)`, seasonID, round).Scan(&exists); err != nil {
 		return Settings{}, SeasonSummary{}, nil, err
 	}
 	if exists {
-		return Settings{}, SeasonSummary{}, nil, errors.New("match already has an auto betting decision")
+		return Settings{}, SeasonSummary{}, nil, errors.New("round already has an auto betting decision")
 	}
 	candidates, err := s.candidatesForRound(ctx, seasonID, round, summary.NextStake)
 	if err != nil {
@@ -785,7 +784,6 @@ WHERE p.season_id = $1
       FROM auto_betting_rounds existing
       WHERE existing.season_id = p.season_id
         AND existing.round_no = p.round_no
-        AND existing.match_id = pr.match_id
   )
 ORDER BY p.season_id, p.round_no, pr.match_id,
          p.prediction_as_of DESC, pr.revision_no DESC`, seasonID, round)
@@ -821,7 +819,7 @@ ORDER BY p.season_id, p.round_no, pr.match_id,
 	if len(predictions) == 0 {
 		return []Candidate{}, nil
 	}
-	ranked := rankPredictions(predictions)
+	ranked := topRankedPrediction(rankPredictions(predictions))
 	result := make([]Candidate, 0, len(ranked))
 	for _, item := range ranked {
 		result = append(result, Candidate{
@@ -935,6 +933,13 @@ func rankPredictions(items []predictionRow) []rankedPrediction {
 		ranked[index].DecisionRank = index + 1
 	}
 	return ranked
+}
+
+func topRankedPrediction(items []rankedPrediction) []rankedPrediction {
+	if len(items) > 1 {
+		return items[:1]
+	}
+	return items
 }
 
 func decisionSignal(item predictionRow) (string, *float64, string) {

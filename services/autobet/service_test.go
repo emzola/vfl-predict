@@ -53,6 +53,21 @@ func TestRankPredictionsFallsBackToModelProbability(t *testing.T) {
 	}
 }
 
+func TestTopRankedPredictionKeepsOnlyRankOne(t *testing.T) {
+	items := []predictionRow{
+		{MatchID: 1, Probability: probability{Home: 0.60, Draw: 0.20, Away: 0.20}},
+		{MatchID: 2, Probability: probability{Home: 0.64, Draw: 0.19, Away: 0.17}},
+	}
+
+	top := topRankedPrediction(rankPredictions(items))
+	if len(top) != 1 {
+		t.Fatalf("top prediction count=%d want 1", len(top))
+	}
+	if top[0].DecisionRank != 1 || top[0].MatchID != 2 {
+		t.Fatalf("top prediction=%+v want rank 1 match 2", top[0])
+	}
+}
+
 func TestApplyPredictionPayloadRecomputesMarketDifferenceFromImplied(t *testing.T) {
 	item := predictionRow{
 		MatchID: 1,
