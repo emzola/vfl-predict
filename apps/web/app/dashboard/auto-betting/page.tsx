@@ -6,6 +6,7 @@ import type { AutoBettingState } from "../../../src/lib/types";
 import { ErrorState, FixtureLabel, LoadingState, MetricCard, PageHeading, StatusPill } from "../../../src/components/Ui";
 
 const RECENT_ROUNDS_PAGE_SIZE = 8;
+const POST_ROUND_25 = 25;
 
 function naira(value?: number) {
   if (typeof value !== "number" || Number.isNaN(value)) return "—";
@@ -164,7 +165,7 @@ export default function AutoBettingPage() {
               </div>
               <div className="rounded-xl border border-slate-800 bg-slate-950/20 p-4 text-sm">
                 <p className="text-slate-500">Odds requirement</p>
-                <p className="mt-1 font-semibold text-white">At least 1.20</p>
+                <p className="mt-1 font-semibold text-white">At least 1.20 through round 25; above 1.00 thereafter</p>
               </div>
               <div className="rounded-xl border border-slate-800 bg-slate-950/20 p-4 text-sm">
                 <p className="text-slate-500">Profit target</p>
@@ -280,7 +281,7 @@ export default function AutoBettingPage() {
                   <div><p className="text-slate-500">Round</p><p className="mt-1">Season {candidate.season_id} · Round {candidate.round}</p></div>
                   <div><p className="text-slate-500">Market</p><p className="mt-1 font-semibold text-white">Over 1.5 Goals</p></div>
                   <div><p className="text-slate-500">Stake</p><p className="mt-1 font-semibold text-white">{naira(candidate.stake_amount)}</p></div>
-                  <div><p className="text-slate-500">Odds requirement</p><p className="mt-1 font-semibold text-white">At least 1.20</p></div>
+                  <div><p className="text-slate-500">Odds requirement</p><p className="mt-1 font-semibold text-white">{candidate.round > POST_ROUND_25 ? "Above 1.00 after round 25" : "At least 1.20 through round 25"}</p></div>
                 </div>
               </div>
             ))}

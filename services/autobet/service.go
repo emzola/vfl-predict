@@ -17,6 +17,7 @@ const (
 	marketKey               = "over_1_5"
 	runtimeState            = "disabled"
 	minimumOdds             = 1.20
+	validOddsFloor          = 1.00
 	postRound25WinGateRound = 25
 	selectionRule           = "highest_ranked_frozen_prediction"
 	stakingStrategy         = "odds_aware_martingale_settlement_gated"
@@ -356,7 +357,7 @@ func (s *Service) LoadDashboard(ctx context.Context) (DashboardState, error) {
 			if selectionErr != nil {
 				return DashboardState{}, selectionErr
 			}
-			if selection != nil {
+			if selection != nil && oddsAllowedForRound(state.NextCandidates[0].Round, selection.DecimalOdds) {
 				if stake, stakeErr := determineMartingaleStake(settings.BaseStake, summary.UnrecoveredLoss, summary.ActivePendingStake, selection.DecimalOdds); stakeErr == nil {
 					state.NextCandidates[0].StakeAmount = stake
 					summary.NextStake = stake
@@ -523,7 +524,7 @@ func (s *Service) NextTask(ctx context.Context) (*WorkerTask, error) {
 		return nil, selectionErr
 	}
 	candidateCopy := candidate
-	if selection != nil && selection.DecimalOdds >= minimumOdds {
+	if selection != nil && oddsAllowedForRound(candidate.Round, selection.DecimalOdds) {
 		stake, stakeErr := determineMartingaleStake(settings.BaseStake, summary.UnrecoveredLoss, summary.ActivePendingStake, selection.DecimalOdds)
 		if stakeErr != nil {
 			// An invalid quote or ledger exposure cannot produce an executable
@@ -534,8 +535,8 @@ func (s *Service) NextTask(ctx context.Context) (*WorkerTask, error) {
 		candidateCopy.StakeAmount = stake
 		summary.NextStake = stake
 	} else if selection != nil {
-		// The worker records this as a skipped round when the quote is below
-		// the configured minimum. No stake is submitted.
+		// The worker records this as a skipped round when the quote does not
+		// meet the phase-specific odds requirements. No stake is submitted.
 		candidateCopy.StakeAmount = summary.NextStake
 	}
 	task.Bets = append(task.Bets, BetTask{Candidate: &candidateCopy, Selection: selection})
@@ -676,7 +677,7 @@ INSERT INTO auto_betting_rounds (
     $1, $2, $3::uuid, $4::uuid, $5, $6, $7, $8, $9, 'skipped', 0,
     $10, NULLIF($11, 0), $12, $13::jsonb, $14
 )`, candidate.SeasonID, candidate.Round, candidate.PredictionRunID, candidate.PredictionRevisionID, candidate.MatchID,
-		candidate.HomeTeam, candidate.AwayTeam, candidate.DecisionRank, marketKey, minimumOdds, derefFloat(observedOdds), truncate(strings.TrimSpace(reason), 256), string(encoded), s.now())
+		candidate.HomeTeam, candidate.AwayTeam, candidate.DecisionRank, marketKey, minimumOddsForRound(candidate.Round), derefFloat(observedOdds), truncate(strings.TrimSpace(reason), 256), string(encoded), s.now())
 	return err
 }
 
@@ -685,8 +686,11 @@ func (s *Service) RecordPlaced(ctx context.Context, seasonID string, round int, 
 	if err != nil {
 		return err
 	}
-	if !isFinite(quotedOdds) || quotedOdds < minimumOdds {
-		return errors.New("quoted odds must be at least 1.20 for martingale staking")
+	if !isFinite(quotedOdds) || quotedOdds <= validOddsFloor {
+		return errors.New("quoted odds must be greater than 1.00 for martingale staking")
+	}
+	if quotedOdds < minimumOdds && !allowsSubMinimumOdds(candidate.Round) {
+		return errors.New("quoted odds must be at least 1.20 before round 26")
 	}
 	stake := placedStake
 	if !isFinite(stake) || stake < 0 {
@@ -731,7 +735,7 @@ INSERT INTO auto_betting_rounds (
     $1, $2, $3::uuid, $4::uuid, $5, $6, $7, $8, $9, 'placed', $10,
     $11, $12, $13, NULLIF($14, ''), $15::jsonb, $16, $16
 )`, candidate.SeasonID, candidate.Round, candidate.PredictionRunID, candidate.PredictionRevisionID, candidate.MatchID,
-		candidate.HomeTeam, candidate.AwayTeam, candidate.DecisionRank, marketKey, stake, minimumOdds, quotedOdds, potential, truncate(strings.TrimSpace(betReference), 256), string(encoded), s.now())
+		candidate.HomeTeam, candidate.AwayTeam, candidate.DecisionRank, marketKey, stake, minimumOddsForRound(candidate.Round), quotedOdds, potential, truncate(strings.TrimSpace(betReference), 256), string(encoded), s.now())
 	return err
 }
 
@@ -1430,8 +1434,8 @@ func determineMartingaleStake(baseStake, unrecoveredLoss, activePendingStake, qu
 	if !isFinite(unrecoveredLoss) || unrecoveredLoss < 0 || !isFinite(activePendingStake) || activePendingStake < 0 {
 		return 0, errors.New("martingale ledger exposure is invalid")
 	}
-	if !isFinite(quotedOdds) || quotedOdds < minimumOdds {
-		return 0, errors.New("quoted odds must be at least 1.20 for martingale staking")
+	if !isFinite(quotedOdds) || quotedOdds <= validOddsFloor {
+		return 0, errors.New("quoted odds must be greater than 1.00 for martingale staking")
 	}
 
 	// Keep the first wager equal to baseStake while targeting the profit that
@@ -1442,6 +1446,24 @@ func determineMartingaleStake(baseStake, unrecoveredLoss, activePendingStake, qu
 		return 0, errors.New("martingale stake could not be calculated")
 	}
 	return roundUpMoney(stake), nil
+}
+
+func allowsSubMinimumOdds(round int) bool {
+	return round > postRound25WinGateRound
+}
+
+func oddsAllowedForRound(round int, quotedOdds float64) bool {
+	if !isFinite(quotedOdds) || quotedOdds <= validOddsFloor {
+		return false
+	}
+	return quotedOdds >= minimumOdds || allowsSubMinimumOdds(round)
+}
+
+func minimumOddsForRound(round int) float64 {
+	if allowsSubMinimumOdds(round) {
+		return validOddsFloor
+	}
+	return minimumOdds
 }
 
 func roundUpMoney(value float64) float64 {

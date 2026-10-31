@@ -267,9 +267,34 @@ func TestDetermineMartingaleStake(t *testing.T) {
 	}
 }
 
-func TestDetermineMartingaleStakeRejectsOddsBelowMinimum(t *testing.T) {
-	if _, err := determineMartingaleStake(50, 0, 0, 1.19); err == nil {
-		t.Fatal("expected odds below 1.20 to be rejected")
+func TestDetermineMartingaleStakeAcceptsValidOddsBelowLegacyMinimum(t *testing.T) {
+	got, err := determineMartingaleStake(50, 0, 0, 1.19)
+	if err != nil {
+		t.Fatalf("determineMartingaleStake error: %v", err)
+	}
+	if math.Abs(got-50) > 1e-9 {
+		t.Fatalf("determineMartingaleStake=%v want 50", got)
+	}
+}
+
+func TestOddsAllowedForRound(t *testing.T) {
+	tests := []struct {
+		name  string
+		round int
+		odds  float64
+		want  bool
+	}{
+		{name: "minimum odds remain required through round 25", round: 25, odds: 1.19, want: false},
+		{name: "minimum odds are accepted through round 25", round: 25, odds: 1.20, want: true},
+		{name: "lower odds are accepted after round 25", round: 26, odds: 1.19, want: true},
+		{name: "odds at or below 1.00 remain invalid", round: 26, odds: 1.00, want: false},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := oddsAllowedForRound(tc.round, tc.odds); got != tc.want {
+				t.Fatalf("oddsAllowedForRound(%d, %.2f)=%t want %t", tc.round, tc.odds, got, tc.want)
+			}
+		})
 	}
 }
 

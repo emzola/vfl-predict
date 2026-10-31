@@ -45,6 +45,27 @@ test("buildBetPayload converts the documented ticket units and metadata", () => 
   assert.equal(payload[0].selections[0].metaData.tournament.event.competitors[0].id, "sr:competitor:276504");
 });
 
+test("buildBetPayload accepts sub-1.20 odds after round 25", () => {
+  const payload = buildBetPayload(
+    { ...candidate, round: 26 },
+    { ...selection, decimal_odds: 1.19, raw_odds: "1.19" },
+    { sessionID: "session-1" },
+  );
+  assert.equal(payload[0].selections[0].odds, 11900);
+  assert.equal(payload[0].selections[0].convertedOdds, "1.19");
+});
+
+test("buildBetPayload keeps the 1.20 floor through round 25", () => {
+  assert.throws(
+    () => buildBetPayload(
+      { ...candidate, round: 25 },
+      { ...selection, decimal_odds: 1.19, raw_odds: "1.19" },
+      { sessionID: "session-1" },
+    ),
+    /at least 1\.20 through round 25/,
+  );
+});
+
 test("Bet9jaApiClient uses the getGames session ID and matches ticket request headers", async () => {
   const requests = [];
   const fetchImpl = async (url, init = {}) => {

@@ -6,6 +6,9 @@ const DEFAULT_AUTH_REFERER = `${DEFAULT_AUTH_ORIGIN}/virtual/?s=new`;
 const DEFAULT_INIT_REFERER = `${DEFAULT_AUTH_ORIGIN}/virtual/`;
 const DEFAULT_TICKET_ORIGIN = "https://launcherlive-vs001.akamaized.net";
 const DEFAULT_TICKET_REFERER = `${DEFAULT_TICKET_ORIGIN}/`;
+const MINIMUM_ODDS_THROUGH_ROUND_25 = 1.20;
+const VALID_ODDS_FLOOR = 1.00;
+const POST_ROUND_25 = 25;
 
 export class Bet9jaError extends Error {
   constructor(message, code = "bet9ja_error") {
@@ -477,7 +480,8 @@ export function buildBetPayload(candidate, selection, {
   const normalizedOddsScale = Number(oddsScale);
   const normalizedSessionID = String(sessionID || "").trim();
   if (!Number.isSafeInteger(matchID) || matchID <= 0) throw new Bet9jaConfigurationError("The candidate match id is invalid.");
-  if (!Number.isFinite(decimalOdds) || decimalOdds < 1.20) throw new Bet9jaConfigurationError("The live selection odds must be at least 1.20 for martingale staking.");
+  if (!Number.isFinite(decimalOdds) || decimalOdds <= VALID_ODDS_FLOOR) throw new Bet9jaConfigurationError("The live selection odds must be greater than 1.00 for martingale staking.");
+  if (decimalOdds < MINIMUM_ODDS_THROUGH_ROUND_25 && !allowsSubMinimumOdds(candidate)) throw new Bet9jaConfigurationError("The live selection odds must be at least 1.20 through round 25.");
   if (!Number.isFinite(stake) || stake <= 0) throw new Bet9jaConfigurationError("The candidate stake is invalid.");
   if (!Number.isFinite(scheduledAt) || scheduledAt <= 0) throw new Bet9jaConfigurationError("The candidate kickoff time is invalid.");
   if (!Number.isSafeInteger(normalizedBookmakerID) || normalizedBookmakerID <= 0) throw new Bet9jaConfigurationError("The Bet9ja bookmaker id is invalid.");
@@ -555,6 +559,11 @@ export function buildBetPayload(candidate, selection, {
       stake: { type: "unit", value: String(stakeValue) },
     }],
   }];
+}
+
+function allowsSubMinimumOdds(candidate) {
+  const round = Number(candidate?.round);
+  return Number.isFinite(round) && round > POST_ROUND_25;
 }
 
 function findAcceptedTicket(payload) {

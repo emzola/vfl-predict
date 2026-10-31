@@ -16,6 +16,8 @@ const heartbeatMs = numberEnv("AUTOBET_HEARTBEAT_SECONDS", 15, 5) * 1000;
 const maxConsecutiveFailures = numberEnv("AUTOBET_MAX_FAILURES_BEFORE_RESTART", 3, 1);
 const maxOddsAgeMs = numberEnv("AUTOBET_MAX_ODDS_AGE_SECONDS", 180, 5) * 1000;
 const minimumBetOdds = 1.20;
+const validBetOddsFloor = 1.00;
+const postRound25WinGateRound = 25;
 
 const bookmakerID = numberEnv("BET9JA_BOOKMAKER_ID", 9478, 1);
 const apiKey = process.env.BET9JA_API_KEY || "";
@@ -280,13 +282,17 @@ async function placeCandidate(candidate, selection, credentials) {
   if (Number(selection.market_id) !== 18 || selection.specifiers !== "total=1.5" || String(selection.outcome_id) !== "12") {
     throw new Error("The live selection did not match the configured Over 1.5 market.");
   }
-  if (!Number.isFinite(decimalOdds) || decimalOdds <= 0) {
-    throw new Error("The live Over 1.5 selection did not contain valid odds.");
-  }
-  if (decimalOdds < minimumBetOdds) {
+  if (!Number.isFinite(decimalOdds) || decimalOdds <= validBetOddsFloor) {
     return {
       action: "skip",
-      reason: `Over 1.5 odds ${decimalOdds.toFixed(2)} are below the configured minimum ${minimumBetOdds.toFixed(2)}.`,
+      reason: "The live Over 1.5 selection did not contain valid odds greater than 1.00.",
+      observedOdds: Number.isFinite(decimalOdds) ? decimalOdds : undefined,
+    };
+  }
+  if (decimalOdds < minimumBetOdds && !allowsSubMinimumOdds(candidate)) {
+    return {
+      action: "skip",
+      reason: `Over 1.5 odds ${decimalOdds.toFixed(2)} are below the configured minimum ${minimumBetOdds.toFixed(2)} through round ${postRound25WinGateRound}.`,
       observedOdds: decimalOdds,
     };
   }
@@ -337,6 +343,10 @@ async function placeCandidate(candidate, selection, credentials) {
     quotedOdds: decimalOdds,
     betReference: placed.ticketId,
   };
+}
+
+function allowsSubMinimumOdds(candidate) {
+  return Number(candidate?.round) > postRound25WinGateRound;
 }
 
 async function resolveCredentials() {
