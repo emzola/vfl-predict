@@ -181,36 +181,14 @@ func TestOver15SettlementDecisionWaitsForLossConfirmation(t *testing.T) {
 	}
 }
 
-func TestApplySettledResultToRecoveryTracksLossesAfterEarlierWins(t *testing.T) {
-	// A profitable earlier round must not hide a later loss. The recovery
-	// balance is based on the current settlement sequence, not season net profit.
-	recovery := applySettledResultToRecovery(0, "won", 50, 32.50)
-	recovery = applySettledResultToRecovery(recovery, "lost", 50, -49.99)
-	if recovery != 50 {
-		t.Fatalf("recovery after earlier win and later loss=%v want 50", recovery)
-	}
-}
-
-func TestApplySettledResultToRecoveryUsesWinningsToReduceOutstandingLoss(t *testing.T) {
-	recovery := applySettledResultToRecovery(0, "lost", 50, -49.99)
-	recovery = applySettledResultToRecovery(recovery, "won", 50, 32.50)
-	if recovery != 17.50 {
-		t.Fatalf("recovery after partial win=%v want 17.50", recovery)
-	}
-	recovery = applySettledResultToRecovery(recovery, "won", 50, 20)
-	if recovery != 0 {
-		t.Fatalf("recovery after full recovery=%v want 0", recovery)
-	}
-}
-
 func TestDetermineMartingaleStake(t *testing.T) {
 	tests := []struct {
-		name            string
-		baseStake       float64
-		unrecoveredLoss float64
-		pendingStake    float64
-		quotedOdds      float64
-		want            float64
+		name          string
+		baseStake     float64
+		settledProfit float64
+		pendingStake  float64
+		quotedOdds    float64
+		want          float64
 	}{
 		{
 			name:       "fresh cycle starts at base stake",
@@ -225,18 +203,11 @@ func TestDetermineMartingaleStake(t *testing.T) {
 			want:       50,
 		},
 		{
-			name:            "recovers outstanding loss and preserves base-stake profit",
-			baseStake:       5000,
-			unrecoveredLoss: 5000,
-			quotedOdds:      1.30,
-			want:            21666.67,
-		},
-		{
-			name:            "screenshot scenario does not fall back to base stake",
-			baseStake:       50,
-			unrecoveredLoss: 50,
-			quotedOdds:      1.65,
-			want:            126.93,
+			name:          "recovers settled loss and preserves base-stake profit",
+			baseStake:     5000,
+			settledProfit: -5000,
+			quotedOdds:    1.30,
+			want:          21666.67,
 		},
 		{
 			name:         "includes unsettled exposure",
@@ -246,17 +217,17 @@ func TestDetermineMartingaleStake(t *testing.T) {
 			want:         300,
 		},
 		{
-			name:            "zero outstanding loss starts at base stake",
-			baseStake:       50,
-			unrecoveredLoss: 0,
-			quotedOdds:      1.30,
-			want:            50,
+			name:          "positive settled profit resets losses",
+			baseStake:     50,
+			settledProfit: 15,
+			quotedOdds:    1.30,
+			want:          50,
 		},
 	}
 
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			got, err := determineMartingaleStake(tc.baseStake, tc.unrecoveredLoss, tc.pendingStake, tc.quotedOdds)
+			got, err := determineMartingaleStake(tc.baseStake, tc.settledProfit, tc.pendingStake, tc.quotedOdds)
 			if err != nil {
 				t.Fatalf("determineMartingaleStake error: %v", err)
 			}

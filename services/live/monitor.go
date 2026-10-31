@@ -328,23 +328,17 @@ func (m *Monitor) pollOnceLeased(ctx context.Context, now time.Time) (PollReport
 			return PollReport{}, err
 		}
 	}
-	resultWarnings := make([]string, 0, 1)
-	if err := m.refreshResultFixtures(ctx, cfg, current, now); err != nil {
-		// The result feed is supplementary. Keep the primary fixture/odds
-		// polling path healthy if it is temporarily unavailable.
-		resultWarnings = append(resultWarnings, fmt.Sprintf("results feed: %v", err))
-	}
 	if err := m.settleObservedResults(ctx); err != nil {
 		return PollReport{}, err
 	}
 	upcoming, kickoff := upcomingRounds(fixturesPayload.Matches, now)
 	if len(upcoming) == 0 {
-		return PollReport{SeasonID: current.ID.String(), FixtureCount: len(fixturesPayload.Matches), FirstKickoff: kickoff, ObservedAt: now, CacheObservations: cacheObservations, Warnings: resultWarnings}, nil
+		return PollReport{SeasonID: current.ID.String(), FixtureCount: len(fixturesPayload.Matches), FirstKickoff: kickoff, ObservedAt: now, CacheObservations: cacheObservations}, nil
 	}
 	if len(upcoming) > m.Config.FutureRounds {
 		upcoming = upcoming[:m.Config.FutureRounds]
 	}
-	report := PollReport{SeasonID: current.ID.String(), FixtureCount: len(fixturesPayload.Matches), UpcomingRounds: upcoming, FirstKickoff: kickoff, ObservedAt: now, CacheObservations: cacheObservations, Warnings: resultWarnings}
+	report := PollReport{SeasonID: current.ID.String(), FixtureCount: len(fixturesPayload.Matches), UpcomingRounds: upcoming, FirstKickoff: kickoff, ObservedAt: now, CacheObservations: cacheObservations}
 	for _, round := range upcoming {
 		oddsKey := fmt.Sprintf("stats_season_odds2/vf:season:%s/%d", current.ID, round)
 		oddsResponse, oddsRawID, oddsErr := m.Runner.FetchAndStore(ctx, "live_season_odds", oddsKey, cfg.LiveBaseURL, oddsKey, map[string]any{"season_id": current.ID.String(), "round": round})
@@ -412,43 +406,6 @@ func (m *Monitor) pollOnceLeased(ctx context.Context, now time.Time) (PollReport
 		_ = m.Repo.UpsertRoundState(ctx, current.ID.String(), round, first, first.Add(-m.Config.PredictionSafetyBuffer), state, fmt.Sprintf(`{"season_observed":%q,"odds_observed":true}`, now.Format(time.RFC3339Nano)))
 	}
 	return report, nil
-}
-
-func (m *Monitor) refreshResultFixtures(ctx context.Context, cfg ingest.Config, current provider.SeasonSummary, now time.Time) error {
-	resultsBaseURL := fixtureResultsBaseURL(cfg)
-	fixtureKey := fmt.Sprintf("stats_season_fixtures2/%s", current.ID)
-	requestKey := "results:" + fixtureKey
-	response, rawID, err := m.Runner.FetchAndStore(ctx, "live_season_results", requestKey, resultsBaseURL, fixtureKey, map[string]any{"season_id": current.ID.String()})
-	if err != nil {
-		return err
-	}
-	if response == nil || strings.TrimSpace(rawID) == "" {
-		return errors.New("season results did not produce a raw payload")
-	}
-	if err := m.Repo.SaveObservation(ctx, "live_season_results", requestKey, response, rawID, response.CacheReused, current.ID.String(), 0, "accepted", `{}`); err != nil {
-		return err
-	}
-	payload, err := provider.ParseFixtures(response.Body)
-	if err != nil {
-		_ = m.Repo.SaveObservation(ctx, "live_season_results", requestKey, response, rawID, false, current.ID.String(), 0, "invalid", fmt.Sprintf(`{"error":%q}`, err.Error()))
-		return err
-	}
-	if payload.Season.ID != current.ID || payload.Season.TournamentID != current.TournamentID {
-		return fmt.Errorf("results identity %s/%s does not match current season %s/%s", payload.Season.ID, payload.Season.TournamentID, current.ID, current.TournamentID)
-	}
-	for _, fixture := range payload.Matches {
-		if err := m.Repo.UpsertFixtureResults(ctx, fixture, rawID, now, 120*time.Second); err != nil {
-			return fmt.Errorf("update result for match %s: %w", fixture.MatchID, err)
-		}
-	}
-	return nil
-}
-
-func fixtureResultsBaseURL(cfg ingest.Config) string {
-	if value := strings.TrimSpace(cfg.ResultsBaseURL); value != "" {
-		return value
-	}
-	return ingest.DefaultResultsBaseURL
 }
 
 func currentSeason(discovery provider.SeasonDiscovery, now time.Time) (provider.SeasonSummary, error) {

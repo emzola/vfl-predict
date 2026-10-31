@@ -251,7 +251,6 @@ export default function AutoBettingPage() {
             <div className="mt-4 grid gap-3 text-sm text-slate-300 sm:grid-cols-2">
               <div><p className="text-slate-500">Total staked</p><p className="mt-1 font-semibold text-white">{naira(summary?.total_staked || 0)}</p></div>
               <div><p className="text-slate-500">Total returned</p><p className="mt-1 font-semibold text-white">{naira(summary?.total_returned || 0)}</p></div>
-              <div><p className="text-slate-500">Unrecovered loss</p><p className="mt-1 font-semibold text-white">{naira(summary?.unrecovered_loss || 0)}</p></div>
               <div><p className="text-slate-500">Wins / losses</p><p className="mt-1">{summary?.bets_won || 0} / {summary?.bets_lost || 0}</p></div>
               <div><p className="text-slate-500">Skipped / pending</p><p className="mt-1">{summary?.bets_skipped || 0} / {summary?.pending_settlements || 0}</p></div>
             </div>
