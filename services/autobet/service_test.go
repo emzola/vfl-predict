@@ -100,6 +100,27 @@ func TestApplyPredictionPayloadRecomputesMarketDifferenceFromImplied(t *testing.
 	}
 }
 
+func TestApplyPredictionPayloadLoadsSecondaryGoalMarkets(t *testing.T) {
+	item := predictionRow{}
+	payload, err := json.Marshal(predictionPayload{
+		Secondary: &secondaryGoalPayload{
+			Over25:           0.74,
+			Under25:          0.26,
+			BothTeamsToScore: 0.52,
+			NeitherTeamScore: 0.48,
+		},
+	})
+	if err != nil {
+		t.Fatalf("marshal payload: %v", err)
+	}
+
+	applyPredictionPayload(&item, payload)
+
+	if !qualifiesForSecondary(item.Secondary) {
+		t.Fatalf("secondary payload should qualify: %+v", item.Secondary)
+	}
+}
+
 func TestRoundMoneyRoundsToTwoDecimals(t *testing.T) {
 	if got := roundMoney(1234.567); got != 1234.57 {
 		t.Fatalf("roundMoney=%v want 1234.57", got)
@@ -138,6 +159,46 @@ func TestQualifiesForOver15(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			if got := qualifiesForOver15(tc.value); got != tc.want {
 				t.Fatalf("qualifiesForOver15(%+v)=%v want %v", tc.value, got, tc.want)
+			}
+		})
+	}
+}
+
+func TestQualifiesForSecondary(t *testing.T) {
+	valid := &secondaryGoalPayload{
+		Over25:           0.74,
+		Under25:          0.26,
+		BothTeamsToScore: 0.52,
+		NeitherTeamScore: 0.48,
+	}
+	tests := []struct {
+		name  string
+		value *secondaryGoalPayload
+		want  bool
+	}{
+		{name: "over 2.5 is highest and btts is second", value: valid, want: true},
+		{
+			name:  "over 2.5 does not exceed btts",
+			value: &secondaryGoalPayload{Over25: 0.52, Under25: 0.20, BothTeamsToScore: 0.60, NeitherTeamScore: 0.40},
+			want:  false,
+		},
+		{
+			name:  "btts does not exceed under 2.5",
+			value: &secondaryGoalPayload{Over25: 0.74, Under25: 0.55, BothTeamsToScore: 0.52, NeitherTeamScore: 0.48},
+			want:  false,
+		},
+		{
+			name:  "btts does not exceed neither",
+			value: &secondaryGoalPayload{Over25: 0.74, Under25: 0.26, BothTeamsToScore: 0.48, NeitherTeamScore: 0.52},
+			want:  false,
+		},
+		{name: "missing secondary market", value: nil, want: false},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := qualifiesForSecondary(tc.value); got != tc.want {
+				t.Fatalf("qualifiesForSecondary(%+v)=%v want %v", tc.value, got, tc.want)
 			}
 		})
 	}

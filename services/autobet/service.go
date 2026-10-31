@@ -13,11 +13,12 @@ import (
 )
 
 const (
-	primaryKey        = "primary"
-	marketKey         = "over_1_5"
-	runtimeState      = "disabled"
-	legacyMinimumOdds = 1.00
-	qualificationRule = "home_and_draw_above_away_or_away_and_draw_above_home"
+	primaryKey                 = "primary"
+	marketKey                  = "over_1_5"
+	runtimeState               = "disabled"
+	legacyMinimumOdds          = 1.00
+	qualificationRule          = "home_and_draw_above_away_or_away_and_draw_above_home"
+	secondaryQualificationRule = "over_2_5_above_btts_under_2_5_and_neither_and_btts_above_under_2_5_and_neither"
 )
 
 type Service struct {
@@ -205,8 +206,16 @@ type bookmakerPayload struct {
 	ModelDifference probability `json:"model_difference"`
 }
 
+type secondaryGoalPayload struct {
+	Over25           float64 `json:"over_2_5"`
+	Under25          float64 `json:"under_2_5"`
+	BothTeamsToScore float64 `json:"both_teams_to_score"`
+	NeitherTeamScore float64 `json:"neither_team_scores"`
+}
+
 type predictionPayload struct {
-	Bookmaker *bookmakerPayload `json:"bookmaker"`
+	Bookmaker *bookmakerPayload     `json:"bookmaker"`
+	Secondary *secondaryGoalPayload `json:"secondary"`
 }
 
 type predictionRow struct {
@@ -223,6 +232,7 @@ type predictionRow struct {
 	PointInTimeVerified  bool
 	OddsObservedAt       *time.Time
 	Bookmaker            *bookmakerPayload
+	Secondary            *secondaryGoalPayload
 }
 
 type rankedPrediction struct {
@@ -240,17 +250,20 @@ func applyPredictionPayload(item *predictionRow, payload []byte) {
 		return
 	}
 	var decoded predictionPayload
-	if json.Unmarshal(payload, &decoded) != nil || decoded.Bookmaker == nil {
+	if json.Unmarshal(payload, &decoded) != nil {
 		return
 	}
-	item.Bookmaker = decoded.Bookmaker
-	if hasFiniteImplied(decoded.Bookmaker.Implied) {
-		item.Bookmaker.ModelDifference = probability{
-			Home: item.Probability.Home - decoded.Bookmaker.Implied.Home,
-			Draw: item.Probability.Draw - decoded.Bookmaker.Implied.Draw,
-			Away: item.Probability.Away - decoded.Bookmaker.Implied.Away,
+	if decoded.Bookmaker != nil {
+		item.Bookmaker = decoded.Bookmaker
+		if hasFiniteImplied(decoded.Bookmaker.Implied) {
+			item.Bookmaker.ModelDifference = probability{
+				Home: item.Probability.Home - decoded.Bookmaker.Implied.Home,
+				Draw: item.Probability.Draw - decoded.Bookmaker.Implied.Draw,
+				Away: item.Probability.Away - decoded.Bookmaker.Implied.Away,
+			}
 		}
 	}
+	item.Secondary = decoded.Secondary
 }
 
 func hasFiniteImplied(value probability) bool {
@@ -558,11 +571,12 @@ func (s *Service) RecordSkip(ctx context.Context, seasonID string, round int, ma
 		return err
 	}
 	payload := map[string]any{
-		"decision_basis":         candidate.DecisionBasis,
-		"decision_outcome":       candidate.DecisionOutcome,
-		"decision_probability":   candidate.DecisionProbability,
-		"point_in_time_verified": candidate.PointInTimeVerified,
-		"qualification_rule":     qualificationRule,
+		"decision_basis":               candidate.DecisionBasis,
+		"decision_outcome":             candidate.DecisionOutcome,
+		"decision_probability":         candidate.DecisionProbability,
+		"point_in_time_verified":       candidate.PointInTimeVerified,
+		"qualification_rule":           qualificationRule,
+		"secondary_qualification_rule": secondaryQualificationRule,
 	}
 	if candidate.DecisionMarketDifference != nil {
 		payload["decision_market_difference"] = *candidate.DecisionMarketDifference
@@ -593,11 +607,12 @@ func (s *Service) RecordPlaced(ctx context.Context, seasonID string, round int, 
 		return errors.New("quoted odds must be positive")
 	}
 	payload := map[string]any{
-		"decision_basis":         candidate.DecisionBasis,
-		"decision_outcome":       candidate.DecisionOutcome,
-		"decision_probability":   candidate.DecisionProbability,
-		"point_in_time_verified": candidate.PointInTimeVerified,
-		"qualification_rule":     qualificationRule,
+		"decision_basis":               candidate.DecisionBasis,
+		"decision_outcome":             candidate.DecisionOutcome,
+		"decision_probability":         candidate.DecisionProbability,
+		"point_in_time_verified":       candidate.PointInTimeVerified,
+		"qualification_rule":           qualificationRule,
+		"secondary_qualification_rule": secondaryQualificationRule,
 	}
 	if candidate.DecisionMarketDifference != nil {
 		payload["decision_market_difference"] = *candidate.DecisionMarketDifference
@@ -794,10 +809,10 @@ ORDER BY p.season_id, p.round_no, pr.match_id,
 			value := oddsAt.Time.UTC()
 			item.OddsObservedAt = &value
 		}
-		if !qualifiesForOver15(item.Probability) {
+		applyPredictionPayload(&item, payload)
+		if !qualifiesForOver15(item.Probability) || !qualifiesForSecondary(item.Secondary) {
 			continue
 		}
-		applyPredictionPayload(&item, payload)
 		predictions = append(predictions, item)
 	}
 	if err := rows.Err(); err != nil {
@@ -867,6 +882,25 @@ ORDER BY p.round_no`, seasonID, s.now())
 func qualifiesForOver15(value probability) bool {
 	return (value.Home > value.Away && value.Draw > value.Away) ||
 		(value.Away > value.Home && value.Draw > value.Home)
+}
+
+func qualifiesForSecondary(value *secondaryGoalPayload) bool {
+	if value == nil ||
+		!isValidMarketProbability(value.Over25) ||
+		!isValidMarketProbability(value.Under25) ||
+		!isValidMarketProbability(value.BothTeamsToScore) ||
+		!isValidMarketProbability(value.NeitherTeamScore) {
+		return false
+	}
+	return value.Over25 > value.BothTeamsToScore &&
+		value.Over25 > value.Under25 &&
+		value.Over25 > value.NeitherTeamScore &&
+		value.BothTeamsToScore > value.Under25 &&
+		value.BothTeamsToScore > value.NeitherTeamScore
+}
+
+func isValidMarketProbability(value float64) bool {
+	return isFinite(value) && value >= 0 && value <= 1
 }
 
 func rankPredictions(items []predictionRow) []rankedPrediction {

@@ -108,7 +108,7 @@ export default function AutoBettingPage() {
       <PageHeading
         eyebrow="Auto betting"
         title="Automated staking"
-        description="Auto betting places flat-stake Over 1.5 Goals bets on every qualifying frozen prediction, accepts any valid odds, and tracks profit from the internal ledger instead of wallet balances."
+        description="Auto betting places flat-stake Over 1.5 Goals bets on every frozen prediction that passes both the 1X2 and secondary goal-market filters, accepts any valid odds, and tracks profit from the internal ledger instead of wallet balances."
         action={<StatusPill status={data.runtime.state || (data.settings.enabled ? "idle" : "disabled")} />}
       />
       {error && <div className="mb-5"><ErrorState message={error} /></div>}
@@ -128,7 +128,7 @@ export default function AutoBettingPage() {
               <input type="checkbox" checked={enabled} onChange={(event) => setEnabled(event.target.checked)} className="mt-1 h-4 w-4 rounded border-slate-700 bg-slate-950 text-accent" />
               <span>
                 <span className="block font-medium text-white">Enable auto betting</span>
-                <span className="mt-1 block text-sm leading-6 text-slate-400">The worker places one flat-stake Over 1.5 bet for every qualifying frozen prediction and can continue to later rounds while earlier bets await settlement.</span>
+                <span className="mt-1 block text-sm leading-6 text-slate-400">The worker places one flat-stake Over 1.5 bet for every prediction that passes both filters and can continue to later rounds while earlier bets await settlement.</span>
               </span>
             </label>
 
