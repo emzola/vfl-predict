@@ -69,6 +69,7 @@ type SeasonSummary struct {
 	TotalStaked         float64 `json:"total_staked"`
 	TotalReturned       float64 `json:"total_returned"`
 	TotalProfit         float64 `json:"total_profit"`
+	UnrecoveredLoss     float64 `json:"unrecovered_loss"`
 	BetsPlaced          int     `json:"bets_placed"`
 	BetsWon             int     `json:"bets_won"`
 	BetsLost            int     `json:"bets_lost"`
@@ -355,7 +356,7 @@ func (s *Service) LoadDashboard(ctx context.Context) (DashboardState, error) {
 				return DashboardState{}, selectionErr
 			}
 			if selection != nil {
-				if stake, stakeErr := determineMartingaleStake(settings.BaseStake, summary.TotalProfit, summary.ActivePendingStake, selection.DecimalOdds); stakeErr == nil {
+				if stake, stakeErr := determineMartingaleStake(settings.BaseStake, summary.UnrecoveredLoss, summary.ActivePendingStake, selection.DecimalOdds); stakeErr == nil {
 					state.NextCandidates[0].StakeAmount = stake
 					summary.NextStake = stake
 				}
@@ -522,7 +523,7 @@ func (s *Service) NextTask(ctx context.Context) (*WorkerTask, error) {
 	}
 	candidateCopy := candidate
 	if selection != nil && selection.DecimalOdds >= minimumOdds {
-		stake, stakeErr := determineMartingaleStake(settings.BaseStake, summary.TotalProfit, summary.ActivePendingStake, selection.DecimalOdds)
+		stake, stakeErr := determineMartingaleStake(settings.BaseStake, summary.UnrecoveredLoss, summary.ActivePendingStake, selection.DecimalOdds)
 		if stakeErr != nil {
 			// An invalid quote or ledger exposure cannot produce an executable
 			// martingale stake for this task.
@@ -691,7 +692,7 @@ func (s *Service) RecordPlaced(ctx context.Context, seasonID string, round int, 
 		return errors.New("placed stake must be non-negative")
 	}
 	if stake == 0 {
-		stake, err = determineMartingaleStake(settings.BaseStake, summary.TotalProfit, summary.ActivePendingStake, quotedOdds)
+		stake, err = determineMartingaleStake(settings.BaseStake, summary.UnrecoveredLoss, summary.ActivePendingStake, quotedOdds)
 		if err != nil {
 			return err
 		}
@@ -710,6 +711,7 @@ func (s *Service) RecordPlaced(ctx context.Context, seasonID string, round int, 
 		"staking_strategy":                stakingStrategy,
 		"base_stake":                      settings.BaseStake,
 		"settled_profit_before_bet":       summary.TotalProfit,
+		"unrecovered_loss_before_bet":     summary.UnrecoveredLoss,
 		"active_pending_stake_before_bet": summary.ActivePendingStake,
 		"placed_stake":                    stake,
 	}
@@ -1245,6 +1247,11 @@ WHERE season_id = $1
 		return SeasonSummary{}, err
 	}
 	summary.ActivePendingStake = pendingStake
+	unrecoveredLoss, err := s.loadUnrecoveredLoss(ctx, seasonID)
+	if err != nil {
+		return SeasonSummary{}, err
+	}
+	summary.UnrecoveredLoss = unrecoveredLoss
 	// The exact next stake is quote-dependent. This is the base-stake estimate
 	// used until the current Over 1.5 quote is loaded by the worker task.
 	summary.NextStake = determineNextStake(settings.BaseStake)
@@ -1254,6 +1261,60 @@ WHERE season_id = $1
 		summary.PauseReason = fmt.Sprintf("Season profit target of %.2f naira reached", settings.ProfitTarget)
 	}
 	return summary, nil
+}
+
+func (s *Service) loadUnrecoveredLoss(ctx context.Context, seasonID string) (float64, error) {
+	rows, err := s.DB.QueryContext(ctx, `
+SELECT status, stake_amount::double precision, COALESCE(realized_profit, 0)::double precision
+FROM auto_betting_rounds
+WHERE season_id = $1
+  AND status IN ('won', 'lost', 'void')
+ORDER BY COALESCE(settled_at, created_at), created_at, auto_betting_round_id`, seasonID)
+	if err != nil {
+		return 0, err
+	}
+	defer rows.Close()
+
+	unrecoveredLoss := 0.0
+	for rows.Next() {
+		var status string
+		var stake, realizedProfit float64
+		if err := rows.Scan(&status, &stake, &realizedProfit); err != nil {
+			return 0, err
+		}
+		unrecoveredLoss = applySettledResultToRecovery(unrecoveredLoss, status, stake, realizedProfit)
+	}
+	if err := rows.Err(); err != nil {
+		return 0, err
+	}
+	return roundMoney(unrecoveredLoss), nil
+}
+
+func applySettledResultToRecovery(unrecoveredLoss float64, status string, stake, realizedProfit float64) float64 {
+	if !isFinite(unrecoveredLoss) || unrecoveredLoss < 0 {
+		unrecoveredLoss = 0
+	}
+	switch status {
+	case "lost":
+		loss := 0.0
+		if isFinite(stake) && stake > 0 {
+			loss = stake
+		}
+		// Prefer the larger value so a provider fee or rounding difference
+		// cannot leave part of a losing stake unrecovered.
+		if isFinite(realizedProfit) && realizedProfit < 0 && -realizedProfit > loss {
+			loss = -realizedProfit
+		}
+		unrecoveredLoss += loss
+	case "won":
+		if isFinite(realizedProfit) && realizedProfit > 0 {
+			unrecoveredLoss -= realizedProfit
+			if unrecoveredLoss < 0 {
+				unrecoveredLoss = 0
+			}
+		}
+	}
+	return roundMoney(unrecoveredLoss)
 }
 
 func (s *Service) loadRecentRounds(ctx context.Context, limit int) ([]RoundRecord, error) {
@@ -1326,25 +1387,21 @@ func determineNextStake(baseStake float64) float64 {
 	return roundMoney(baseStake)
 }
 
-func determineMartingaleStake(baseStake, settledProfit, activePendingStake, quotedOdds float64) (float64, error) {
+func determineMartingaleStake(baseStake, unrecoveredLoss, activePendingStake, quotedOdds float64) (float64, error) {
 	if !isFinite(baseStake) || baseStake <= 0 {
 		return 0, errors.New("base stake must be positive for martingale staking")
 	}
-	if !isFinite(settledProfit) || !isFinite(activePendingStake) || activePendingStake < 0 {
+	if !isFinite(unrecoveredLoss) || unrecoveredLoss < 0 || !isFinite(activePendingStake) || activePendingStake < 0 {
 		return 0, errors.New("martingale ledger exposure is invalid")
 	}
 	if !isFinite(quotedOdds) || quotedOdds < minimumOdds {
 		return 0, errors.New("quoted odds must be at least 1.20 for martingale staking")
 	}
 
-	settledLosses := 0.0
-	if settledProfit < 0 {
-		settledLosses = -settledProfit
-	}
 	// Keep the first wager equal to baseStake while targeting the profit that
 	// a base-stake wager at the current odds would have produced.
 	profitTarget := baseStake * (quotedOdds - 1)
-	stake := (settledLosses + activePendingStake + profitTarget) / (quotedOdds - 1)
+	stake := (unrecoveredLoss + activePendingStake + profitTarget) / (quotedOdds - 1)
 	if !isFinite(stake) || stake <= 0 {
 		return 0, errors.New("martingale stake could not be calculated")
 	}
