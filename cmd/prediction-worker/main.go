@@ -26,7 +26,7 @@ func main() {
 	round := 0
 	modelName := strings.TrimSpace(os.Getenv("PREDICTION_MODEL"))
 	if modelName == "" {
-		modelName = "bookmaker_first"
+		modelName = research.DynamicBayesianModelName
 	}
 	freeze := false
 	autoFreeze := false
@@ -48,7 +48,7 @@ func main() {
 	flag.StringVar(&migrationsDir, "migrations-dir", migrationsDir, "directory containing SQL migrations")
 	flag.StringVar(&seasonID, "season-id", seasonID, "season to predict; required for run-once")
 	flag.IntVar(&round, "round", round, "round to predict; required for run-once")
-	flag.StringVar(&modelName, "model", modelName, "prediction policy/model name (default: bookmaker_first)")
+	flag.StringVar(&modelName, "model", modelName, "prediction policy/model name (default: dynamic_bayesian_team_strength)")
 	flag.BoolVar(&freeze, "freeze", freeze, "create an official frozen round prediction")
 	flag.BoolVar(&autoFreeze, "auto-freeze", autoFreeze, "freeze the selected upcoming round during the configured pre-kickoff window")
 	flag.BoolVar(&runOnce, "run-once", runOnce, "generate one round and exit")

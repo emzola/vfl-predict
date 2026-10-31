@@ -43,14 +43,16 @@ adjusted ratings with a capped `log(1 + goal_difference)` margin adjustment.
 The rating term is therefore a prior/covariate in the goal likelihood; its
 probability output is never averaged with a second model output.
 
-At a season boundary, ratings and residuals carry over at `0.20` by default
-and their variances are expanded toward the initial prior variance. A new
-season is explicitly prepared even if it has no completed result yet, which
-supports round-one predictions without inventing form history.
+The live prediction worker now fits the model only on completed results from
+the target season before the round cutoff. At the start of a season, ratings
+and residuals therefore begin from the configured initial priors; no previous
+season state is carried into live predictions. A new season is explicitly
+prepared even if it has no completed result yet, which supports round-one
+predictions without inventing form history.
 
-The default filter is deterministic and uses no MCMC. Current-season results
-are the most recent state updates; historical seasons only influence the state
-through the configured carryover and the replay training history.
+The default filter is deterministic and uses no MCMC. Historical seasons remain
+available to the separate walk-forward replay tooling for evaluation, but are
+not used by the live prediction worker.
 
 ## Unified markets
 

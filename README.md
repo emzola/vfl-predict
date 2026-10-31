@@ -145,11 +145,12 @@ request budget. Network operation requires the explicit connectivity flag and
 keeps the ten-second minimum spacing. The operational API binds to loopback by
 default; set an internal token before using a non-loopback bind.
 
-The prediction worker defaults to the `bookmaker_first` production policy. For
-each fixture it uses normalized bookmaker-implied 1X2 probabilities only when a
-complete verified line was observed before the cutoff; otherwise it records a
-per-fixture Poisson fallback. Use `-model poisson` to explicitly run the
-statistical fallback policy.
+The prediction worker defaults to the `dynamic_bayesian_team_strength` policy.
+It generates current-season model probabilities and uses normalized,
+point-in-time bookmaker-implied 1X2 probabilities as the market/value
+benchmark. Use `-model bookmaker_first` to explicitly make bookmaker
+probabilities the primary 1X2 prediction, or `-model poisson` to run the
+statistical fallback policy directly.
 
 ## Phase 2 research evaluation
 

@@ -5,9 +5,9 @@ Phase 3 provides independent worker commands:
 - `cmd/live-monitor` runs the leased live season/fixture/odds monitor with the
   shared provider request budget and adaptive polling plan.
 - `cmd/prediction-worker` performs provisional or explicitly frozen round
-  generation using the production `bookmaker_first` policy: verified pre-cutoff
-  bookmaker-implied 1X2 probabilities first, with the Phase 2 Poisson goal model
-  as the per-fixture fallback.
+  generation using the production `dynamic_bayesian_team_strength` policy:
+  current-season model probabilities are compared with verified pre-cutoff
+  bookmaker-implied 1X2 probabilities as the market/value benchmark.
 - `cmd/forward-settle` settles frozen predictions and records forward paper
   metrics.
 

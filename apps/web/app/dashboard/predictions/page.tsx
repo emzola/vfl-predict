@@ -6,6 +6,20 @@ import { outcomeLabel, rankPredictions } from "../../../src/lib/predictions";
 import type { Overview, PredictionPage } from "../../../src/lib/types";
 import { ErrorState, FixtureLabel, LoadingState, PageHeading, ProbabilityBars, SecondaryGoalMarkets, StatusPill } from "../../../src/components/Ui";
 
+function predictionModelLabel(page: PredictionPage): string | undefined {
+  const prediction = page.fixtures.find((item) => item.engine || item.prediction_policy);
+  const model = prediction?.engine || prediction?.prediction_policy;
+  if (!model) return undefined;
+  const normalized = model.toLowerCase();
+  if (normalized === "dynamic_bayesian_team_strength" || normalized === "dynamic_bayesian" || normalized === "phase6") {
+    return "Dynamic Bayesian";
+  }
+  if (normalized === "bookmaker_implied") return "Bookmaker implied";
+  if (normalized === "bookmaker_first" || normalized === "market_first" || normalized === "production") return "Bookmaker first";
+  if (normalized === "poisson") return "Poisson";
+  return model;
+}
+
 export default function PredictionsPage() {
   const [overview, setOverview] = useState<Overview>();
   const [page, setPage] = useState<PredictionPage>();
@@ -58,11 +72,12 @@ export default function PredictionsPage() {
   if (error && !page) return <><PageHeading eyebrow="Predictions" title="Round predictions" /><ErrorState message={error} /></>;
   if (!page) return <><PageHeading eyebrow="Predictions" title="Round predictions" description="Provisional and frozen probabilities are read from persisted prediction revisions." /><LoadingState /></>;
   const rankedPredictions = rankPredictions(page.fixtures);
+  const modelLabel = predictionModelLabel(page);
   return (
     <>
       <PageHeading eyebrow="Predictions" title="Round predictions" description="The page automatically follows the next upcoming round after the current playing round. An official round is only complete when all eight fixtures are present and frozen before the earliest kickoff." />
       {error && <div className="mb-5"><ErrorState message={error} /></div>}
-      <div className="mb-6 flex flex-wrap items-center gap-3"><StatusPill status={page.status || "unavailable"} /><span className="text-sm text-slate-400">{page.season_id ? "Season " + page.season_id : "No season"} · {page.round ? "Round " + page.round : "No round"} · {page.fixtures.length}/8 displayed</span>{page.model_version && <span className="text-xs text-slate-500">Policy {page.model_version}</span>}</div>
+      <div className="mb-6 flex flex-wrap items-center gap-3"><StatusPill status={page.status || "unavailable"} /><span className="text-sm text-slate-400">{page.season_id ? "Season " + page.season_id : "No season"} · {page.round ? "Round " + page.round : "No round"} · {page.fixtures.length}/8 displayed</span>{(modelLabel || page.model_version) && <span className="text-xs text-slate-500">Model {modelLabel || "unknown"}{page.model_version ? " · " + page.model_version : ""}</span>}</div>
       {page.fixtures.length > 0 && <div className="mb-6 rounded-2xl border border-slate-800 bg-slate-950/20 p-4"><p className="eyebrow">Decision ranking</p><p className="mt-2 text-sm leading-6 text-slate-400">Fixtures are ordered by the strongest positive model-versus-market difference when available, then by the model probability for the selected outcome. This is a transparent review aid, not a profitability claim.</p></div>}
       {!page.complete && <div className="mb-6 rounded-2xl border border-warning/30 bg-warning/10 p-4 text-sm leading-6 text-amber-100">This is not a complete official round. The interface keeps it visibly provisional or unavailable and does not promote it to a frozen eight-fixture set.</div>}
       {page.failure_reason && <div className="mb-6 rounded-2xl border border-danger/30 bg-danger/10 p-4 text-sm leading-6 text-rose-100">Latest engine status: {page.failure_reason}</div>}
