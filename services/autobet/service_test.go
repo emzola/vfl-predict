@@ -273,23 +273,28 @@ func TestDetermineMartingaleStakeRejectsOddsBelowMinimum(t *testing.T) {
 	}
 }
 
-func TestPostRound25ProfitGate(t *testing.T) {
+func TestPostRound25WinGate(t *testing.T) {
 	tests := []struct {
-		name             string
-		round25Completed bool
-		profit           float64
-		wantPause        bool
+		name              string
+		lastWinningRound  int
+		round25Status     string
+		previousBetStatus string
+		wantPause         bool
 	}{
-		{name: "round 25 is still pending", round25Completed: false, profit: 25, wantPause: false},
-		{name: "completed season is exactly even", round25Completed: true, profit: 0, wantPause: false},
-		{name: "completed season is still losing", round25Completed: true, profit: -10, wantPause: false},
-		{name: "round 25 was skipped and season is profitable", round25Completed: true, profit: 10, wantPause: true},
+		{name: "no winning bet yet", lastWinningRound: 0, wantPause: false},
+		{name: "round 24 win does not pause before round 25", lastWinningRound: 24, wantPause: false},
+		{name: "round 25 win pauses", lastWinningRound: 25, wantPause: true},
+		{name: "round 25 loss followed by round 26 win pauses", lastWinningRound: 26, wantPause: true},
+		{name: "round 25 skipped and previous placed bet won", lastWinningRound: 24, round25Status: "skipped", previousBetStatus: "won", wantPause: true},
+		{name: "round 25 skipped and previous placed bet lost continues", lastWinningRound: 24, round25Status: "skipped", previousBetStatus: "lost", wantPause: false},
+		{name: "round 25 skipped and previous placed bet was void continues", lastWinningRound: 24, round25Status: "skipped", previousBetStatus: "void", wantPause: false},
+		{name: "round 25 void with an earlier win continues", lastWinningRound: 24, round25Status: "void", previousBetStatus: "won", wantPause: false},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			got := postRound25ProfitPause(tc.round25Completed, tc.profit)
+			got := postRound25WinPause(tc.lastWinningRound, tc.round25Status, tc.previousBetStatus)
 			if got != tc.wantPause {
-				t.Fatalf("post-round-25 pause=%t want %t", got, tc.wantPause)
+				t.Fatalf("post-round-25 win pause=%t want %t", got, tc.wantPause)
 			}
 		})
 	}

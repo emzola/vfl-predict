@@ -13,13 +13,13 @@ import (
 )
 
 const (
-	primaryKey                 = "primary"
-	marketKey                  = "over_1_5"
-	runtimeState               = "disabled"
-	minimumOdds                = 1.20
-	postRound25ProfitGateRound = 25
-	selectionRule              = "highest_ranked_frozen_prediction"
-	stakingStrategy            = "odds_aware_martingale_settlement_gated"
+	primaryKey              = "primary"
+	marketKey               = "over_1_5"
+	runtimeState            = "disabled"
+	minimumOdds             = 1.20
+	postRound25WinGateRound = 25
+	selectionRule           = "highest_ranked_frozen_prediction"
+	stakingStrategy         = "odds_aware_martingale_settlement_gated"
 )
 
 type Service struct {
@@ -1223,7 +1223,9 @@ WHERE runtime_key = $1`, primaryKey).Scan(&runtime.State, &workerID, &seasonID, 
 
 func (s *Service) loadSeasonSummary(ctx context.Context, seasonID string, settings Settings) (SeasonSummary, error) {
 	summary := SeasonSummary{SeasonID: seasonID, ProfitTarget: settings.ProfitTarget}
-	var completedRound25 int
+	var lastWinningRound int
+	var round25Status string
+	var previousPlacedStatus string
 	err := s.DB.QueryRowContext(ctx, `
 SELECT
     COALESCE(sum(stake_amount) FILTER (WHERE status IN ('placed', 'won', 'lost', 'void')), 0)::double precision,
@@ -1234,9 +1236,26 @@ SELECT
     count(*) FILTER (WHERE status = 'lost')::integer,
     count(*) FILTER (WHERE status = 'skipped')::integer,
     count(*) FILTER (WHERE status = 'placed')::integer,
-    count(*) FILTER (WHERE round_no = $2 AND status IN ('won', 'lost', 'void', 'skipped'))::integer
+    COALESCE(MAX(round_no) FILTER (WHERE status = 'won'), 0)::integer,
+    COALESCE((
+        SELECT gate_round.status
+        FROM auto_betting_rounds AS gate_round
+        WHERE gate_round.season_id = $1
+          AND gate_round.round_no = $2
+        ORDER BY gate_round.updated_at DESC, gate_round.auto_betting_round_id DESC
+        LIMIT 1
+    ), '')::text,
+    COALESCE((
+        SELECT previous_round.status
+        FROM auto_betting_rounds AS previous_round
+        WHERE previous_round.season_id = $1
+          AND previous_round.round_no < $2
+          AND previous_round.status IN ('won', 'lost', 'void')
+        ORDER BY previous_round.round_no DESC, previous_round.updated_at DESC, previous_round.auto_betting_round_id DESC
+        LIMIT 1
+    ), '')::text
 FROM auto_betting_rounds
-WHERE season_id = $1`, seasonID, postRound25ProfitGateRound).Scan(&summary.TotalStaked, &summary.TotalReturned, &summary.TotalProfit, &summary.BetsPlaced, &summary.BetsWon, &summary.BetsLost, &summary.BetsSkipped, &summary.PendingSettlements, &completedRound25)
+WHERE season_id = $1`, seasonID, postRound25WinGateRound).Scan(&summary.TotalStaked, &summary.TotalReturned, &summary.TotalProfit, &summary.BetsPlaced, &summary.BetsWon, &summary.BetsLost, &summary.BetsSkipped, &summary.PendingSettlements, &lastWinningRound, &round25Status, &previousPlacedStatus)
 	if err != nil {
 		return SeasonSummary{}, err
 	}
@@ -1262,15 +1281,22 @@ WHERE season_id = $1
 	if summary.ProfitTargetReached {
 		summary.Paused = true
 		summary.PauseReason = fmt.Sprintf("Season profit target of %.2f naira reached", settings.ProfitTarget)
-	} else if postRound25ProfitPause(completedRound25 > 0, summary.TotalProfit) {
+	} else if postRound25WinPause(lastWinningRound, round25Status, previousPlacedStatus) {
 		summary.Paused = true
-		summary.PauseReason = "Season is profitable after round 25; auto betting is paused for the rest of the season."
+		if lastWinningRound >= postRound25WinGateRound {
+			summary.PauseReason = fmt.Sprintf("A winning bet was recorded in round %d; auto betting is paused for the rest of the season.", lastWinningRound)
+		} else {
+			summary.PauseReason = "Round 25 was skipped and the most recent prior placed bet was won; auto betting is paused for the rest of the season."
+		}
 	}
 	return summary, nil
 }
 
-func postRound25ProfitPause(round25Completed bool, totalProfit float64) bool {
-	return round25Completed && totalProfit > 0
+func postRound25WinPause(lastWinningRound int, round25Status, previousPlacedStatus string) bool {
+	if lastWinningRound >= postRound25WinGateRound {
+		return true
+	}
+	return strings.EqualFold(strings.TrimSpace(round25Status), "skipped") && strings.EqualFold(strings.TrimSpace(previousPlacedStatus), "won")
 }
 
 func (s *Service) loadUnrecoveredLoss(ctx context.Context, seasonID string) (float64, error) {
