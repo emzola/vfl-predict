@@ -24,6 +24,8 @@ const (
 	StatusStale        Status = "stale"
 	StatusUnavailable  Status = "unavailable"
 	StatusMissedCutoff Status = "missed_cutoff"
+
+	dynamicTrainingScope = "current_season_only"
 )
 
 type Config struct {
@@ -124,9 +126,10 @@ func (e *Engine) GenerateRound(ctx context.Context, seasonID string, round int, 
 		return RoundReport{}, fmt.Errorf("load prediction dataset: %w", err)
 	}
 	if dynamicModel {
-		// The dynamic model fits from completed fixtures/results. Load odds only
-		// for the eight target fixtures so point-in-time market metadata remains
-		// available without scanning the full historical odds archive.
+		// The dynamic model fits only from completed fixtures/results in the
+		// target season. Load odds only for the eight target fixtures so
+		// point-in-time market metadata remains available without scanning the
+		// full historical odds archive.
 		targetIDs := make([]provider.MatchID, 0, 8)
 		for _, match := range dataset.Matches {
 			if match.SeasonID.String() == seasonID && match.Round == round {
@@ -177,6 +180,9 @@ func (e *Engine) GenerateRound(ctx context.Context, seasonID string, round int, 
 		targetIDs[target.MatchID] = struct{}{}
 	}
 	for _, match := range dataset.Matches {
+		if dynamicModel && match.SeasonID.String() != seasonID {
+			continue
+		}
 		if _, target := targetIDs[match.MatchID]; target {
 			clone := match
 			clone.HomeScore = nil
@@ -185,7 +191,7 @@ func (e *Engine) GenerateRound(ctx context.Context, seasonID string, round int, 
 			asOfMatches = append(asOfMatches, clone)
 			continue
 		}
-		if match.Final() && match.ScheduledAt.Before(cutoff) {
+		if eligibleTrainingMatch(match, cutoff, dynamicModel, seasonID) {
 			training = append(training, match)
 			clone := match
 			clone.Odds = nil
@@ -200,7 +206,16 @@ func (e *Engine) GenerateRound(ctx context.Context, seasonID string, round int, 
 		report.Warnings = append(report.Warnings, fmt.Sprintf("only %d eligible historical matches; need %d", len(training), cfg.MinimumTrainingData))
 		return e.persistUnavailable(ctx, report, cfg, "insufficient_training_data")
 	}
-	inputDataset := research.NewDataset(asOfMatches, dataset.Seasons)
+	inputSeasons := dataset.Seasons
+	if dynamicModel {
+		inputSeasons = make([]research.SeasonRecord, 0, 1)
+		for _, season := range dataset.Seasons {
+			if season.ID.String() == seasonID {
+				inputSeasons = append(inputSeasons, season)
+			}
+		}
+	}
+	inputDataset := research.NewDataset(asOfMatches, inputSeasons)
 	inputVersion := inputDataset.Fingerprint()
 	report.InputVersion = inputVersion
 	model, err := research.NewBaselineModel(cfg.ModelName, false)
@@ -225,6 +240,9 @@ func (e *Engine) GenerateRound(ctx context.Context, seasonID string, round int, 
 	modelParameters := map[string]any{"policy": cfg.PolicyVersion}
 	if dynamic, ok := model.(*research.DynamicBayesianModel); ok {
 		modelParameters["phase6"] = dynamic.Parameters()
+		modelParameters["training_scope"] = dynamicTrainingScope
+		modelParameters["training_season_id"] = seasonID
+		modelParameters["training_match_count"] = len(training)
 	}
 	modelID, err := research.NewResearchStorage(e.DB).EnsureModelDefinition(ctx, cfg.ModelName, modelVersion, predictionModelDescription(cfg.ModelName), modelParameters)
 	if err != nil {
@@ -232,9 +250,11 @@ func (e *Engine) GenerateRound(ctx context.Context, seasonID string, round int, 
 	}
 	if dynamic, ok := model.(*research.DynamicBayesianModel); ok {
 		if _, err := research.NewResearchStorage(e.DB).SaveDynamicCheckpoint(ctx, modelID, seasonID, round, cutoff, inputVersion, dynamic, map[string]any{
-			"prediction_policy": cfg.PolicyVersion,
-			"model_version":     modelVersion,
-			"prediction_as_of":  now,
+			"prediction_policy":    cfg.PolicyVersion,
+			"model_version":        modelVersion,
+			"prediction_as_of":     now,
+			"training_scope":       dynamicTrainingScope,
+			"training_match_count": len(training),
 		}); err != nil {
 			return RoundReport{}, err
 		}
@@ -332,6 +352,7 @@ RETURNING prediction_run_id::text, status, generated_fixture_count`, seasonID, r
 			payload["secondary"] = selected.PredictGoals(clone, selected.Config.MaxScore)
 			payload["secondary_model"] = research.DynamicBayesianModelName
 			payload["dynamic_team_strength"] = selected.Diagnostics(clone)
+			payload["training_scope"] = dynamicTrainingScope
 		}
 		feature, featureErr := research.BuildFeatureVector(inputDataset, clone, cutoff, cfg.FeatureConfig)
 		if featureErr == nil {
@@ -406,6 +427,13 @@ func eligibleOdds(quotes []research.OddsQuote, cutoff time.Time, requireVerified
 		result = append(result, quote)
 	}
 	return result
+}
+
+func eligibleTrainingMatch(match research.MatchRecord, cutoff time.Time, dynamicModel bool, seasonID string) bool {
+	if !match.Final() || !match.ScheduledAt.Before(cutoff) {
+		return false
+	}
+	return !dynamicModel || match.SeasonID.String() == seasonID
 }
 
 func predictionModelDescription(modelName string) string {

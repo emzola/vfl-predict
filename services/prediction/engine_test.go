@@ -46,3 +46,32 @@ func TestBookmakerFirstRequiresCompleteVerifiedLineBeforeUse(t *testing.T) {
 		t.Fatalf("eligible odds=%d want 2", len(match.Odds))
 	}
 }
+
+func TestDynamicTrainingUsesOnlyCurrentSeasonBeforeCutoff(t *testing.T) {
+	cutoff := time.Date(2026, 10, 25, 12, 0, 0, 0, time.UTC)
+	current := research.MatchRecord{
+		SeasonID:    "2026",
+		ScheduledAt: cutoff.Add(-time.Hour),
+		HomeScore:   predictionIntPointer(1),
+		AwayScore:   predictionIntPointer(0),
+	}
+	historical := current
+	historical.SeasonID = "2025"
+	future := current
+	future.ScheduledAt = cutoff.Add(time.Hour)
+
+	if !eligibleTrainingMatch(current, cutoff, true, "2026") {
+		t.Fatal("current-season completed match should be eligible")
+	}
+	if eligibleTrainingMatch(historical, cutoff, true, "2026") {
+		t.Fatal("historical-season match should not train the live dynamic model")
+	}
+	if eligibleTrainingMatch(future, cutoff, true, "2026") {
+		t.Fatal("post-cutoff match should not train the live dynamic model")
+	}
+	if !eligibleTrainingMatch(historical, cutoff, false, "2026") {
+		t.Fatal("non-dynamic policies should retain historical training behavior")
+	}
+}
+
+func predictionIntPointer(value int) *int { return &value }
