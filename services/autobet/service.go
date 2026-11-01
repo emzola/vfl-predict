@@ -415,7 +415,7 @@ SET enabled = $2,
     base_stake = $3,
     profit_target = $4,
     recovery_reset_at = CASE
-        WHEN $2 = false AND enabled = true THEN $6
+        WHEN $2 IS DISTINCT FROM enabled THEN $6
         ELSE recovery_reset_at
     END,
     updated_by = NULLIF($5, ''),
