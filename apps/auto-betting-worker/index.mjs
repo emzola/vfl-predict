@@ -20,10 +20,8 @@ const validBetOddsFloor = 1.00;
 const bookmakerID = numberEnv("BET9JA_BOOKMAKER_ID", 9478, 1);
 const apiKey = process.env.BET9JA_API_KEY || "";
 const limitID = numberEnv("BET9JA_LIMIT_ID", 1424, 1);
-const selectionID = "uof:6/sr:sport:1/26/72";
 const productType = process.env.BET9JA_PRODUCT_TYPE || "VFLM";
 const marketName = "Odd/even";
-const outcomeName = "even";
 const stakeScale = numberEnv("BET9JA_STAKE_SCALE", 10000, 1);
 const oddsScale = numberEnv("BET9JA_ODDS_SCALE", 10000, 1);
 
@@ -203,7 +201,7 @@ async function handleTask(task) {
     lastCandidate = candidate || lastCandidate;
     if (!candidate) continue;
     if (!bet?.selection) {
-      transientError = `No current live Odd/even selection for even was available for match ${candidate.match_id}.`;
+      transientError = `No current live Odd/even selection was available for match ${candidate.match_id}.`;
       await recordSkippedBet(candidate, transientError);
       continue;
     }
@@ -277,8 +275,10 @@ async function recordSkippedBet(candidate, reason, observedOdds) {
 
 async function placeCandidate(candidate, selection, credentials) {
   const decimalOdds = Number(selection.decimal_odds);
-  if (Number(selection.market_id) !== 26 || selection.specifiers !== "" || String(selection.outcome_id) !== "72") {
-    throw new Error("The live selection did not match the configured Odd/even market's even outcome.");
+  const normalizedOutcomeName = String(selection.outcome_name || "").trim().toLowerCase();
+  const expectedOutcomeID = normalizedOutcomeName === "odd" ? "70" : normalizedOutcomeName === "even" ? "72" : "";
+  if (Number(selection.market_id) !== 26 || selection.specifiers !== "" || !expectedOutcomeID || String(selection.outcome_id) !== expectedOutcomeID) {
+    throw new Error("The live selection did not match a configured Odd/even outcome.");
   }
   if (!Number.isFinite(decimalOdds) || decimalOdds <= validBetOddsFloor) {
     return {
@@ -291,7 +291,7 @@ async function placeCandidate(candidate, selection, credentials) {
     return { action: "skip", reason: "The Odd/even market is not currently active.", observedOdds: decimalOdds };
   }
   if (selection.outcome_active !== undefined && Number(selection.outcome_active) !== 1) {
-    return { action: "skip", reason: "The even outcome is not currently active.", observedOdds: decimalOdds };
+    return { action: "skip", reason: `The ${normalizedOutcomeName} outcome is not currently active.`, observedOdds: decimalOdds };
   }
   const observedAt = Date.parse(selection.observed_at || selection.source_timestamp_at || "");
   if (!Number.isFinite(observedAt) || Date.now() - observedAt > maxOddsAgeMs) {
@@ -301,10 +301,10 @@ async function placeCandidate(candidate, selection, credentials) {
     bookmakerID,
     sessionID: provider.sessionID,
     limitID,
-    selectionID,
+    selectionID: `uof:6/sr:sport:1/26/${expectedOutcomeID}`,
     productType,
     marketName,
-    outcomeName,
+    outcomeName: normalizedOutcomeName,
     stakeScale,
     oddsScale,
   });

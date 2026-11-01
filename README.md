@@ -149,14 +149,16 @@ The prediction worker defaults to the `dynamic_bayesian_team_strength` policy.
 It generates current-season model probabilities and records verified,
 point-in-time bookmaker markets. Auto-betting selects the #1 frozen prediction
 from the model's Over 2.5 probability versus the normalized bookmaker Over 2.5
-market ranking, then bets Odd/even — even once for that round. Use `-model bookmaker_first` to explicitly make bookmaker
+market ranking, then bets the next outcome in the repeating Odd/even cycle once
+for that round. Use `-model bookmaker_first` to explicitly make bookmaker
 probabilities the primary 1X2 prediction, or `-model poisson` to run the
 statistical fallback policy directly.
-The wager uses martingale recovery sizing: a winning recovery bet covers all
+The wager repeats the Odd/even outcome cycle even, odd. It uses
+martingale recovery sizing: a winning recovery bet covers all
 outstanding losses, missed profits, and the current base-profit target.
 The recovery cycle continues across season boundaries. Turning auto betting off
 ends the current cycle, and re-enabling it starts a fresh cycle from the base
-stake.
+stake and first even outcome.
 
 ## Phase 2 research evaluation
 

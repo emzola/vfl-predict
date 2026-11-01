@@ -51,6 +51,16 @@ test("buildBetPayload converts the odd/even ticket units and metadata", () => {
   assert.equal(payload[0].selections[0].metaData.tournament.event.competitors[0].id, "sr:competitor:276504");
 });
 
+test("buildBetPayload supports the odd outcome", () => {
+  const payload = buildBetPayload(
+    candidate,
+    { ...selection, outcome_id: "70", outcome_name: "odd", decimal_odds: 1.9, raw_odds: "1.90" },
+    { sessionID: "session-1" },
+  );
+  assert.equal(payload[0].selections[0].id, "uof:6/sr:sport:1/26/70");
+  assert.equal(payload[0].selections[0].metaData.outcomeName, "odd");
+});
+
 test("buildBetPayload accepts valid even odds below the former 1.20 floor", () => {
   const payload = buildBetPayload(
     { ...candidate, round: 1 },
@@ -72,14 +82,14 @@ test("buildBetPayload rejects odds at or below 1.00", () => {
   );
 });
 
-test("buildBetPayload rejects a non-even market selection", () => {
+test("buildBetPayload rejects a non Odd/even market selection", () => {
   assert.throws(
     () => buildBetPayload(
       candidate,
       { ...selection, market_id: 18, specifiers: "total=1.5", outcome_id: "12", outcome_name: "over 1.5" },
       { sessionID: "session-1" },
     ),
-    /Odd\/even.*even outcome/,
+    /valid Odd\/even market outcome/,
   );
 });
 

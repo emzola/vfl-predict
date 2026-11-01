@@ -174,6 +174,28 @@ func TestOddEvenSettlementDecisionUsesFinalParity(t *testing.T) {
 	}
 }
 
+func TestOddEvenBetCycleRepeatsEvenOdd(t *testing.T) {
+	want := []string{"even", "odd", "even", "odd", "even", "odd", "even", "odd"}
+	for index, expected := range want {
+		outcome := oddEvenBetCycle[index%len(oddEvenBetCycle)]
+		if outcome.Name != expected {
+			t.Fatalf("cycle position %d=%s want %s", index, outcome.Name, expected)
+		}
+	}
+}
+
+func TestOddEvenSettlementDecisionUsesRequestedOutcome(t *testing.T) {
+	status, score, settled := oddEvenSettlementDecisionFor("completed", false, &matchScore{Home: 2, Away: 0}, nil, nil, "odd")
+	if !settled || status != "lost" || score == nil {
+		t.Fatalf("odd decision on even score=(%s, %+v, %v)", status, score, settled)
+	}
+
+	status, score, settled = oddEvenSettlementDecisionFor("completed", false, &matchScore{Home: 1, Away: 0}, nil, nil, "odd")
+	if !settled || status != "won" || score == nil {
+		t.Fatalf("odd decision on odd score=(%s, %+v, %v)", status, score, settled)
+	}
+}
+
 func TestOddEvenSettlementDecisionWaitsForFinalScore(t *testing.T) {
 	status, score, settled := oddEvenSettlementDecision("unknown", true, &matchScore{Home: 1, Away: 0}, &matchScore{Home: 1, Away: 0}, nil)
 	if settled || status != "" || score != nil {
