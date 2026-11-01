@@ -80,6 +80,6 @@ the worker waits for settlement and sizes each winning recovery bet to cover
 all outstanding principal losses, missed profits, and the current base-profit
 target. Existing ledger rows remain unchanged.
 
-`021_phase7_cross_season_recovery.sql` keeps the recovery cycle across season
-boundaries and refreshes the cutoff when auto betting is turned off or
-re-enabled. Re-enabling auto betting therefore starts a fresh cycle.
+`021_phase7_cross_season_recovery.sql` adds the cutoff used by the service to
+keep recovery across season boundaries. The service refreshes that cutoff when
+auto betting is turned off or re-enabled, so re-enabling starts a fresh cycle.
