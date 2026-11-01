@@ -79,3 +79,7 @@ used after the Odd/even switch. Its historical ledger rows remain unchanged.
 the worker waits for settlement and sizes each winning recovery bet to cover
 all outstanding principal losses, missed profits, and the current base-profit
 target. Existing ledger rows remain unchanged.
+
+`021_phase7_cross_season_recovery.sql` keeps the recovery cycle across season
+boundaries and adds the cutoff used to reset it when auto betting is turned
+off. Re-enabling auto betting does not create a new cycle.

@@ -36,7 +36,8 @@ The separate Node auto-betting worker places one Odd/even bet on even for the
 #1-ranked frozen prediction in each round. It waits for each bet to settle,
 then sizes the next wager to cover outstanding losses, missed profits, and the
 current base-profit target. It accepts any valid active quote above 1.00 and
-settles the ledger from the final score parity.
+settles the ledger from the final score parity. A season change does not reset
+the recovery cycle; turning auto betting off does.
 
 For one-off or controlled operations, `-freeze` remains available and forces
 the requested run to use the official frozen status. `-auto-freeze` is intended

@@ -46,6 +46,7 @@ type Settings struct {
 	CredentialsConfigured bool       `json:"credentials_configured"`
 	MaskedUsername        string     `json:"masked_username,omitempty"`
 	CredentialsUpdatedAt  *time.Time `json:"credentials_updated_at,omitempty"`
+	RecoveryResetAt       time.Time  `json:"-"`
 	UsernameCiphertext    string     `json:"-"`
 	PasswordCiphertext    string     `json:"-"`
 	UpdatedAt             time.Time  `json:"updated_at"`
@@ -407,14 +408,19 @@ func (s *Service) UpdateSettings(ctx context.Context, accountID string, enabled 
 	if profitTarget <= 0 {
 		return errors.New("profit target must be positive")
 	}
+	now := s.now()
 	_, err := s.DB.ExecContext(ctx, `
 UPDATE auto_betting_settings
 SET enabled = $2,
     base_stake = $3,
     profit_target = $4,
+    recovery_reset_at = CASE
+        WHEN $2 = false AND enabled = true THEN $6
+        ELSE recovery_reset_at
+    END,
     updated_by = NULLIF($5, ''),
     updated_at = $6
-WHERE setting_key = $1`, primaryKey, enabled, baseStake, profitTarget, accountID, s.now())
+WHERE setting_key = $1`, primaryKey, enabled, baseStake, profitTarget, accountID, now)
 	return err
 }
 
@@ -1158,17 +1164,21 @@ LIMIT 1`).Scan(&seasonID)
 func (s *Service) loadSettings(ctx context.Context) (Settings, error) {
 	var settings Settings
 	var maskedUsername, usernameCiphertext, passwordCiphertext sql.NullString
+	var recoveryResetAt sql.NullTime
 	var credentialsUpdatedAt sql.NullTime
 	err := s.DB.QueryRowContext(ctx, `
 SELECT enabled, base_stake::double precision, profit_target::double precision,
-	       updated_at, COALESCE(bet9ja_username_masked, ''), credentials_updated_at,
+       recovery_reset_at, updated_at, COALESCE(bet9ja_username_masked, ''), credentials_updated_at,
        COALESCE(bet9ja_username_ciphertext, ''), COALESCE(bet9ja_password_ciphertext, '')
 FROM auto_betting_settings
-WHERE setting_key = $1`, primaryKey).Scan(&settings.Enabled, &settings.BaseStake, &settings.ProfitTarget, &settings.UpdatedAt, &maskedUsername, &credentialsUpdatedAt, &usernameCiphertext, &passwordCiphertext)
+WHERE setting_key = $1`, primaryKey).Scan(&settings.Enabled, &settings.BaseStake, &settings.ProfitTarget, &recoveryResetAt, &settings.UpdatedAt, &maskedUsername, &credentialsUpdatedAt, &usernameCiphertext, &passwordCiphertext)
 	if err != nil {
 		return Settings{}, err
 	}
 	settings.UpdatedAt = settings.UpdatedAt.UTC()
+	if recoveryResetAt.Valid {
+		settings.RecoveryResetAt = recoveryResetAt.Time.UTC()
+	}
 	if maskedUsername.Valid {
 		settings.MaskedUsername = maskedUsername.String
 	}
@@ -1248,16 +1258,17 @@ WHERE season_id = $1`, seasonID).Scan(&summary.TotalStaked, &summary.TotalReturn
 	if err != nil {
 		return SeasonSummary{}, err
 	}
-	recovery, err := s.loadRecoveryState(ctx, seasonID)
+	recovery, err := s.loadRecoveryState(ctx, settings.RecoveryResetAt)
 	if err != nil {
 		return SeasonSummary{}, err
 	}
 	summary.UnrecoveredLoss = recovery.UnrecoveredLoss
 	summary.MissedProfit = recovery.MissedProfit
 	summary.RecoveryObligation = recovery.obligation()
-	// Until a live even quote is loaded, expose the base stake as the safe
-	// fallback. NextTask and the dashboard replace it with the recovery stake
-	// whenever a valid quote is available.
+	// Recovery is intentionally loaded across season boundaries. Until a live
+	// even quote is loaded, expose the base stake as the safe fallback; NextTask
+	// and the dashboard replace it with the recovery stake when a valid quote is
+	// available.
 	summary.NextStake = determineNextStake(settings.BaseStake)
 	summary.ProfitTargetReached = summary.TotalProfit >= settings.ProfitTarget
 	if summary.ProfitTargetReached {
@@ -1267,14 +1278,17 @@ WHERE season_id = $1`, seasonID).Scan(&summary.TotalStaked, &summary.TotalReturn
 	return summary, nil
 }
 
-func (s *Service) loadRecoveryState(ctx context.Context, seasonID string) (recoveryState, error) {
+func (s *Service) loadRecoveryState(ctx context.Context, resetAt time.Time) (recoveryState, error) {
+	if resetAt.IsZero() {
+		resetAt = time.Unix(0, 0).UTC()
+	}
 	rows, err := s.DB.QueryContext(ctx, `
 SELECT status, stake_amount::double precision, quoted_odds::double precision,
        COALESCE(realized_profit, 0)::double precision
 FROM auto_betting_rounds
-WHERE season_id = $1
+WHERE created_at >= $1
   AND status IN ('won', 'lost', 'void')
-ORDER BY COALESCE(settled_at, created_at), created_at, auto_betting_round_id`, seasonID)
+ORDER BY COALESCE(settled_at, created_at), created_at, auto_betting_round_id`, resetAt)
 	if err != nil {
 		return recoveryState{}, err
 	}

@@ -128,7 +128,7 @@ export default function AutoBettingPage() {
               <input type="checkbox" checked={enabled} onChange={(event) => setEnabled(event.target.checked)} className="mt-1 h-4 w-4 rounded border-slate-700 bg-slate-950 text-accent" />
               <span>
                 <span className="block font-medium text-white">Enable auto betting</span>
-                <span className="mt-1 block text-sm leading-6 text-slate-400">The worker places exactly one bet on even for the #1-ranked frozen prediction in each round, then waits for settlement before sizing the next recovery bet.</span>
+                <span className="mt-1 block text-sm leading-6 text-slate-400">The worker places exactly one bet on even for the #1-ranked frozen prediction in each round, then waits for settlement before sizing the next recovery bet. Recovery continues across seasons and resets only when auto betting is turned off.</span>
               </span>
             </label>
 

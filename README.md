@@ -154,6 +154,8 @@ probabilities the primary 1X2 prediction, or `-model poisson` to run the
 statistical fallback policy directly.
 The wager uses martingale recovery sizing: a winning recovery bet covers all
 outstanding losses, missed profits, and the current base-profit target.
+The recovery cycle continues across season boundaries and resets only when
+auto betting is turned off.
 
 ## Phase 2 research evaluation
 
