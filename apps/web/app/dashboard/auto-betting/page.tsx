@@ -6,7 +6,6 @@ import type { AutoBettingState } from "../../../src/lib/types";
 import { ErrorState, FixtureLabel, LoadingState, MetricCard, PageHeading, StatusPill } from "../../../src/components/Ui";
 
 const RECENT_ROUNDS_PAGE_SIZE = 8;
-const POST_ROUND_25 = 25;
 
 function naira(value?: number) {
   if (typeof value !== "number" || Number.isNaN(value)) return "—";
@@ -109,16 +108,16 @@ export default function AutoBettingPage() {
       <PageHeading
         eyebrow="Auto betting"
         title="Automated staking"
-        description="Auto betting places one Over 1.5 Goals bet on the highest-ranked frozen prediction in each round. Ranking follows the Dynamic Bayesian Over 2.5-versus-bookmaker market comparison, with model probability as the fallback. Odds-aware martingale staking waits for settlement before sizing the next bet and preserves the profit a base-stake bet at the current odds would earn."
+        description="Auto betting places one Odd/even bet on even for the #1-ranked frozen prediction in each round. Ranking follows the Dynamic Bayesian Over 2.5-versus-bookmaker market comparison, with model probability as the fallback. Flat staking uses the configured base stake for every bet."
         action={<StatusPill status={data.runtime.state || (data.settings.enabled ? "idle" : "disabled")} />}
       />
       {error && <div className="mb-5"><ErrorState message={error} /></div>}
 
       <section className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
         <MetricCard label="Auto betting" value={data.settings.enabled ? "Enabled" : "Disabled"} detail={"Updated " + formatDate(data.settings.updated_at)} tone={data.settings.enabled ? "good" : "warn"} />
-        <MetricCard label="Base stake" value={naira(data.settings.base_stake)} detail="Starting stake and martingale profit unit" />
+        <MetricCard label="Base stake" value={naira(data.settings.base_stake)} detail="Fixed amount used for every bet" />
         <MetricCard label="Season profit" value={naira(summary?.total_profit || 0)} detail={summary?.season_id ? "Season " + summary.season_id : "No active season"} tone={summary?.total_profit && summary.total_profit > 0 ? "good" : "default"} />
-        <MetricCard label="Next stake" value={naira(summary?.next_stake || data.settings.base_stake)} detail="Recalculated after the previous bet settles" tone={summary?.paused ? "warn" : "default"} />
+        <MetricCard label="Next stake" value={naira(summary?.next_stake || data.settings.base_stake)} detail="Same as the configured base stake" tone={summary?.paused ? "warn" : "default"} />
       </section>
 
       <section className="mt-6 grid gap-6 xl:grid-cols-[0.9fr_1.1fr]">
@@ -129,7 +128,7 @@ export default function AutoBettingPage() {
               <input type="checkbox" checked={enabled} onChange={(event) => setEnabled(event.target.checked)} className="mt-1 h-4 w-4 rounded border-slate-700 bg-slate-950 text-accent" />
               <span>
                 <span className="block font-medium text-white">Enable auto betting</span>
-                <span className="mt-1 block text-sm leading-6 text-slate-400">The worker places one Over 1.5 bet on the highest-ranked frozen prediction, then waits for settlement before the next bet so martingale sizing uses the actual result.</span>
+                <span className="mt-1 block text-sm leading-6 text-slate-400">The worker places exactly one bet on even for the #1-ranked frozen prediction in each round. It keeps progressing through rounds while open bets are settled independently.</span>
               </span>
             </label>
 
@@ -161,11 +160,11 @@ export default function AutoBettingPage() {
             <div className="grid gap-3 sm:grid-cols-2">
               <div className="rounded-xl border border-slate-800 bg-slate-950/20 p-4 text-sm">
                 <p className="text-slate-500">Fixed market</p>
-                <p className="mt-1 font-semibold text-white">Over 1.5 Goals</p>
+                <p className="mt-1 font-semibold text-white">Odd/even — even</p>
               </div>
               <div className="rounded-xl border border-slate-800 bg-slate-950/20 p-4 text-sm">
                 <p className="text-slate-500">Odds requirement</p>
-                <p className="mt-1 font-semibold text-white">At least 1.20 through round 25; above 1.00 thereafter</p>
+                <p className="mt-1 font-semibold text-white">Above 1.00 with an active, fresh quote</p>
               </div>
               <div className="rounded-xl border border-slate-800 bg-slate-950/20 p-4 text-sm">
                 <p className="text-slate-500">Profit target</p>
@@ -173,7 +172,7 @@ export default function AutoBettingPage() {
               </div>
               <div className="rounded-xl border border-slate-800 bg-slate-950/20 p-4 text-sm">
                 <p className="text-slate-500">Staking model</p>
-                <p className="mt-1 font-semibold text-white">Odds-aware martingale</p>
+                <p className="mt-1 font-semibold text-white">Flat staking</p>
               </div>
             </div>
 
@@ -252,7 +251,7 @@ export default function AutoBettingPage() {
             <div className="mt-4 grid gap-3 text-sm text-slate-300 sm:grid-cols-2">
               <div><p className="text-slate-500">Total staked</p><p className="mt-1 font-semibold text-white">{naira(summary?.total_staked || 0)}</p></div>
               <div><p className="text-slate-500">Total returned</p><p className="mt-1 font-semibold text-white">{naira(summary?.total_returned || 0)}</p></div>
-              <div><p className="text-slate-500">Unrecovered loss</p><p className="mt-1 font-semibold text-white">{naira(summary?.unrecovered_loss || 0)}</p></div>
+              <div><p className="text-slate-500">Configured stake</p><p className="mt-1 font-semibold text-white">{naira(data.settings.base_stake)}</p></div>
               <div><p className="text-slate-500">Wins / losses</p><p className="mt-1">{summary?.bets_won || 0} / {summary?.bets_lost || 0}</p></div>
               <div><p className="text-slate-500">Skipped / pending</p><p className="mt-1">{summary?.bets_skipped || 0} / {summary?.pending_settlements || 0}</p></div>
             </div>
@@ -262,7 +261,7 @@ export default function AutoBettingPage() {
 
       <section className="panel mt-6 p-6">
         <p className="eyebrow">Next ranked bet</p>
-        {candidates.length === 0 ? <p className="mt-4 text-sm text-slate-400">No ranked frozen prediction is currently ready. The worker may be waiting for settlement, a complete frozen round, a new season after a profit-target pause, or valid live market data.</p> : (
+        {candidates.length === 0 ? <p className="mt-4 text-sm text-slate-400">No ranked frozen prediction is currently ready. The worker may be waiting for a complete frozen round, a new season after a profit-target pause, or valid live even-market data.</p> : (
           <div className="mt-4 space-y-4">
             {candidates.map((candidate) => (
               <div key={candidate.match_id} className="rounded-xl border border-slate-800 bg-slate-950/20 p-4">
@@ -279,9 +278,9 @@ export default function AutoBettingPage() {
                 </div>
                 <div className="mt-5 grid gap-3 text-sm text-slate-300 sm:grid-cols-2 lg:grid-cols-4">
                   <div><p className="text-slate-500">Round</p><p className="mt-1">Season {candidate.season_id} · Round {candidate.round}</p></div>
-                  <div><p className="text-slate-500">Market</p><p className="mt-1 font-semibold text-white">Over 1.5 Goals</p></div>
+                  <div><p className="text-slate-500">Market</p><p className="mt-1 font-semibold text-white">Odd/even — even</p></div>
                   <div><p className="text-slate-500">Stake</p><p className="mt-1 font-semibold text-white">{naira(candidate.stake_amount)}</p></div>
-                  <div><p className="text-slate-500">Odds requirement</p><p className="mt-1 font-semibold text-white">{candidate.round > POST_ROUND_25 ? "Above 1.00 after round 25" : "At least 1.20 through round 25"}</p></div>
+                  <div><p className="text-slate-500">Odds requirement</p><p className="mt-1 font-semibold text-white">Above 1.00</p></div>
                 </div>
               </div>
             ))}

@@ -15,17 +15,15 @@ const dryRun = /^true$/i.test(process.env.AUTOBET_DRY_RUN || "false");
 const heartbeatMs = numberEnv("AUTOBET_HEARTBEAT_SECONDS", 15, 5) * 1000;
 const maxConsecutiveFailures = numberEnv("AUTOBET_MAX_FAILURES_BEFORE_RESTART", 3, 1);
 const maxOddsAgeMs = numberEnv("AUTOBET_MAX_ODDS_AGE_SECONDS", 180, 5) * 1000;
-const minimumBetOdds = 1.20;
 const validBetOddsFloor = 1.00;
-const postRound25WinGateRound = 25;
 
 const bookmakerID = numberEnv("BET9JA_BOOKMAKER_ID", 9478, 1);
 const apiKey = process.env.BET9JA_API_KEY || "";
 const limitID = numberEnv("BET9JA_LIMIT_ID", 1424, 1);
-const selectionID = process.env.BET9JA_SELECTION_ID || "uof:6/sr:sport:1/18/12?total=1.5";
+const selectionID = "uof:6/sr:sport:1/26/72";
 const productType = process.env.BET9JA_PRODUCT_TYPE || "VFLM";
-const marketName = process.env.BET9JA_TICKET_MARKET_NAME || "Total Goals";
-const outcomeName = process.env.BET9JA_TICKET_OUTCOME_NAME || "over 1.5";
+const marketName = "Odd/even";
+const outcomeName = "even";
 const stakeScale = numberEnv("BET9JA_STAKE_SCALE", 10000, 1);
 const oddsScale = numberEnv("BET9JA_ODDS_SCALE", 10000, 1);
 
@@ -205,7 +203,7 @@ async function handleTask(task) {
     lastCandidate = candidate || lastCandidate;
     if (!candidate) continue;
     if (!bet?.selection) {
-      transientError = `No current live Over 1.5 selection was available for match ${candidate.match_id}.`;
+      transientError = `No current live Odd/even selection for even was available for match ${candidate.match_id}.`;
       await recordSkippedBet(candidate, transientError);
       continue;
     }
@@ -279,32 +277,25 @@ async function recordSkippedBet(candidate, reason, observedOdds) {
 
 async function placeCandidate(candidate, selection, credentials) {
   const decimalOdds = Number(selection.decimal_odds);
-  if (Number(selection.market_id) !== 18 || selection.specifiers !== "total=1.5" || String(selection.outcome_id) !== "12") {
-    throw new Error("The live selection did not match the configured Over 1.5 market.");
+  if (Number(selection.market_id) !== 26 || selection.specifiers !== "" || String(selection.outcome_id) !== "72") {
+    throw new Error("The live selection did not match the configured Odd/even market's even outcome.");
   }
   if (!Number.isFinite(decimalOdds) || decimalOdds <= validBetOddsFloor) {
     return {
       action: "skip",
-      reason: "The live Over 1.5 selection did not contain valid odds greater than 1.00.",
+      reason: "The live Odd/even selection did not contain valid odds greater than 1.00.",
       observedOdds: Number.isFinite(decimalOdds) ? decimalOdds : undefined,
     };
   }
-  if (decimalOdds < minimumBetOdds && !allowsSubMinimumOdds(candidate)) {
-    return {
-      action: "skip",
-      reason: `Over 1.5 odds ${decimalOdds.toFixed(2)} are below the configured minimum ${minimumBetOdds.toFixed(2)} through round ${postRound25WinGateRound}.`,
-      observedOdds: decimalOdds,
-    };
-  }
   if (selection.market_status !== undefined && Number(selection.market_status) !== 1) {
-    return { action: "skip", reason: "The Over 1.5 market is not currently active.", observedOdds: decimalOdds };
+    return { action: "skip", reason: "The Odd/even market is not currently active.", observedOdds: decimalOdds };
   }
   if (selection.outcome_active !== undefined && Number(selection.outcome_active) !== 1) {
-    return { action: "skip", reason: "The Over 1.5 outcome is not currently active.", observedOdds: decimalOdds };
+    return { action: "skip", reason: "The even outcome is not currently active.", observedOdds: decimalOdds };
   }
   const observedAt = Date.parse(selection.observed_at || selection.source_timestamp_at || "");
   if (!Number.isFinite(observedAt) || Date.now() - observedAt > maxOddsAgeMs) {
-    throw new StaleOddsError(`Live Over 1.5 odds are stale or unavailable (maximum age ${Math.round(maxOddsAgeMs / 1000)} seconds).`);
+    throw new StaleOddsError(`Live Odd/even odds are stale or unavailable (maximum age ${Math.round(maxOddsAgeMs / 1000)} seconds).`);
   }
   const buildPayload = () => buildBetPayload(candidate, selection, {
     bookmakerID,
@@ -343,10 +334,6 @@ async function placeCandidate(candidate, selection, credentials) {
     quotedOdds: decimalOdds,
     betReference: placed.ticketId,
   };
-}
-
-function allowsSubMinimumOdds(candidate) {
-  return Number(candidate?.round) > postRound25WinGateRound;
 }
 
 async function resolveCredentials() {

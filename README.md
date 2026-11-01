@@ -147,11 +147,13 @@ default; set an internal token before using a non-loopback bind.
 
 The prediction worker defaults to the `dynamic_bayesian_team_strength` policy.
 It generates current-season model probabilities and records verified,
-point-in-time bookmaker markets. Auto-betting uses the model's Over 2.5
-probability versus the normalized bookmaker Over 2.5 market as its value
-benchmark. Use `-model bookmaker_first` to explicitly make bookmaker
+point-in-time bookmaker markets. Auto-betting selects the #1 frozen prediction
+from the model's Over 2.5 probability versus the normalized bookmaker Over 2.5
+market ranking, then bets Odd/even — even once for that round. Use `-model bookmaker_first` to explicitly make bookmaker
 probabilities the primary 1X2 prediction, or `-model poisson` to run the
 statistical fallback policy directly.
+The wager uses the configured base stake on every round; previous results,
+open bets, and live odds do not change the stake.
 
 ## Phase 2 research evaluation
 

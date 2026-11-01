@@ -6,9 +6,10 @@ const DEFAULT_AUTH_REFERER = `${DEFAULT_AUTH_ORIGIN}/virtual/?s=new`;
 const DEFAULT_INIT_REFERER = `${DEFAULT_AUTH_ORIGIN}/virtual/`;
 const DEFAULT_TICKET_ORIGIN = "https://launcherlive-vs001.akamaized.net";
 const DEFAULT_TICKET_REFERER = `${DEFAULT_TICKET_ORIGIN}/`;
-const MINIMUM_ODDS_THROUGH_ROUND_25 = 1.20;
 const VALID_ODDS_FLOOR = 1.00;
-const POST_ROUND_25 = 25;
+const EVEN_MARKET_ID = 26;
+const EVEN_OUTCOME_ID = "72";
+const EVEN_SELECTION_ID = "uof:6/sr:sport:1/26/72";
 
 export class Bet9jaError extends Error {
   constructor(message, code = "bet9ja_error") {
@@ -462,10 +463,10 @@ export function buildBetPayload(candidate, selection, {
   bookmakerID = 9478,
   sessionID = "",
   limitID = 1424,
-  selectionID = "uof:6/sr:sport:1/18/12?total=1.5",
+  selectionID = EVEN_SELECTION_ID,
   productType = "VFLM",
-  marketName = "Total Goals",
-  outcomeName = "over 1.5",
+  marketName = "Odd/even",
+  outcomeName = "even",
   stakeScale = 10000,
   oddsScale = 10000,
 } = {}) {
@@ -480,8 +481,13 @@ export function buildBetPayload(candidate, selection, {
   const normalizedOddsScale = Number(oddsScale);
   const normalizedSessionID = String(sessionID || "").trim();
   if (!Number.isSafeInteger(matchID) || matchID <= 0) throw new Bet9jaConfigurationError("The candidate match id is invalid.");
-  if (!Number.isFinite(decimalOdds) || decimalOdds <= VALID_ODDS_FLOOR) throw new Bet9jaConfigurationError("The live selection odds must be greater than 1.00 for martingale staking.");
-  if (decimalOdds < MINIMUM_ODDS_THROUGH_ROUND_25 && !allowsSubMinimumOdds(candidate)) throw new Bet9jaConfigurationError("The live selection odds must be at least 1.20 through round 25.");
+  if (Number(selection.market_id) !== EVEN_MARKET_ID || String(selection.specifiers || "") !== "" || String(selection.outcome_id) !== EVEN_OUTCOME_ID || String(selection.outcome_name || "").trim().toLowerCase() !== "even") {
+    throw new Bet9jaConfigurationError("The live selection must be the Odd/even market's even outcome.");
+  }
+  if (String(selectionID) !== EVEN_SELECTION_ID || String(marketName).trim().toLowerCase() !== "odd/even" || String(outcomeName).trim().toLowerCase() !== "even") {
+    throw new Bet9jaConfigurationError("The ticket configuration must select Odd/even — even.");
+  }
+  if (!Number.isFinite(decimalOdds) || decimalOdds <= VALID_ODDS_FLOOR) throw new Bet9jaConfigurationError("The live selection odds must be greater than 1.00 for flat staking.");
   if (!Number.isFinite(stake) || stake <= 0) throw new Bet9jaConfigurationError("The candidate stake is invalid.");
   if (!Number.isFinite(scheduledAt) || scheduledAt <= 0) throw new Bet9jaConfigurationError("The candidate kickoff time is invalid.");
   if (!Number.isSafeInteger(normalizedBookmakerID) || normalizedBookmakerID <= 0) throw new Bet9jaConfigurationError("The Bet9ja bookmaker id is invalid.");
@@ -501,7 +507,7 @@ export function buildBetPayload(candidate, selection, {
   const homeProviderID = String(selection.home_team_provider_id || `sr:competitor:${homeUID}`);
   const awayProviderID = String(selection.away_team_provider_id || `sr:competitor:${awayUID}`);
   const round = Number(candidate.round);
-  const outcome = String(outcomeName || selection.outcome_name || "over 1.5");
+  const outcome = String(outcomeName || selection.outcome_name || "even");
   const seasonYear = String(selection.season_year || "").trim();
   if (!seasonYear) throw new Bet9jaConfigurationError("The current season provider year is required to place a bet.");
   const tournamentName = `Season ${seasonYear}`;
@@ -530,7 +536,7 @@ export function buildBetPayload(candidate, selection, {
       convertedOddsType: "dec",
       metaData: {
         lang: "EN-EN",
-        marketName: String(marketName || selection.market_name || "Total Goals"),
+        marketName: String(marketName || selection.market_name || "Odd/even"),
         outcomeName: outcome,
         outrightType: null,
         marketId: null,
@@ -559,11 +565,6 @@ export function buildBetPayload(candidate, selection, {
       stake: { type: "unit", value: String(stakeValue) },
     }],
   }];
-}
-
-function allowsSubMinimumOdds(candidate) {
-  const round = Number(candidate?.round);
-  return Number.isFinite(round) && round > POST_ROUND_25;
 }
 
 function findAcceptedTicket(payload) {

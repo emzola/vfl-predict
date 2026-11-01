@@ -59,12 +59,20 @@ model's checkpoints, shadow runs, and registry-selection tables. The normal
 production deployment runs replay, shadow, and approval gates before selecting
 the model; it does not bypass them.
 
-`016_phase7_flat_multi_betting.sql` updates the auto-betting ledger for
-fixture-level compatibility while the active selection logic chooses only the
-highest-ranked frozen prediction per round. Auto betting uses odds-aware
-martingale staking, accepts Over 1.5 odds at least 1.20, and waits for each
-bet to settle before processing the next frozen round.
+`016_phase7_flat_multi_betting.sql` is retained as historical ledger
+compatibility for the earlier fixture-level auto-betting shape. It is not a
+description of the current selection or staking behavior.
 
-`017_phase7_martingale_settlement.sql` restores the 1.20 minimum-odds default
-for new auto-betting ledger rows and records the settlement-gated staking
-behavior used by the worker.
+`017_phase7_martingale_settlement.sql` is also historical. It records the
+minimum-odds and settlement-gated behavior used before the current Odd/even
+strategy and is not rewritten after application.
+
+`018_phase7_odd_even_betting.sql` switches new auto-betting ledger rows to the
+Odd/even market's even outcome, removes the legacy 1.20/round-25 quote gate,
+and enforces one new-strategy decision per season round while preserving older
+ledger rows unchanged.
+
+`019_phase7_flat_staking.sql` makes flat staking explicit for the active
+strategy: every new placed bet uses the configured base stake, independently
+of prior results, open exposure, or live odds. Existing ledger rows remain
+unchanged.

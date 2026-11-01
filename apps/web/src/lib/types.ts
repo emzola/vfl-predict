@@ -221,7 +221,6 @@ export type AutoBettingSeasonSummary = {
   total_staked: number;
   total_returned: number;
   total_profit: number;
-  unrecovered_loss: number;
   bets_placed: number;
   bets_won: number;
   bets_lost: number;
@@ -230,7 +229,6 @@ export type AutoBettingSeasonSummary = {
   paused: boolean;
   pause_reason?: string;
   next_stake: number;
-  active_pending_stake: number;
   profit_target: number;
   profit_target_reached: boolean;
 };

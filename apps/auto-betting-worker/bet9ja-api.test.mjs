@@ -26,28 +26,34 @@ const selection = {
   away_team_uid: 276515,
   away_team_provider_id: "sr:competitor:276515",
   away_team_abbreviation: "PRA",
+  market_id: 26,
+  market_name: "Odd/even",
+  specifiers: "",
+  outcome_id: "72",
   decimal_odds: 1.4,
   raw_odds: "1.40",
-  outcome_name: "over 1.5",
+  outcome_name: "even",
 };
 
-test("buildBetPayload converts the documented ticket units and metadata", () => {
+test("buildBetPayload converts the odd/even ticket units and metadata", () => {
   const payload = buildBetPayload(candidate, selection, { sessionID: "session-1" });
   assert.equal(payload.length, 1);
   assert.equal(payload[0].sender.bookmakerId, 9478);
   assert.equal(payload[0].sender.endCustomer.id, "session-1");
   assert.equal(payload[0].selections[0].eventId, "vf:match:1412492414");
-  assert.equal(payload[0].selections[0].id, "uof:6/sr:sport:1/18/12?total=1.5");
+  assert.equal(payload[0].selections[0].id, "uof:6/sr:sport:1/26/72");
   assert.equal(payload[0].selections[0].odds, 14000);
   assert.equal(payload[0].selections[0].convertedOdds, "1.40");
+  assert.equal(payload[0].selections[0].metaData.marketName, "Odd/even");
+  assert.equal(payload[0].selections[0].metaData.outcomeName, "even");
   assert.equal(payload[0].bets[0].stake.value, "500000");
   assert.equal(payload[0].selections[0].metaData.tournament.name, "Season 2026");
   assert.equal(payload[0].selections[0].metaData.tournament.event.competitors[0].id, "sr:competitor:276504");
 });
 
-test("buildBetPayload accepts sub-1.20 odds after round 25", () => {
+test("buildBetPayload accepts valid even odds below the former 1.20 floor", () => {
   const payload = buildBetPayload(
-    { ...candidate, round: 26 },
+    { ...candidate, round: 1 },
     { ...selection, decimal_odds: 1.19, raw_odds: "1.19" },
     { sessionID: "session-1" },
   );
@@ -55,14 +61,25 @@ test("buildBetPayload accepts sub-1.20 odds after round 25", () => {
   assert.equal(payload[0].selections[0].convertedOdds, "1.19");
 });
 
-test("buildBetPayload keeps the 1.20 floor through round 25", () => {
+test("buildBetPayload rejects odds at or below 1.00", () => {
   assert.throws(
     () => buildBetPayload(
-      { ...candidate, round: 25 },
-      { ...selection, decimal_odds: 1.19, raw_odds: "1.19" },
+      candidate,
+      { ...selection, decimal_odds: 1.00, raw_odds: "1.00" },
       { sessionID: "session-1" },
     ),
-    /at least 1\.20 through round 25/,
+    /greater than 1\.00/,
+  );
+});
+
+test("buildBetPayload rejects a non-even market selection", () => {
+  assert.throws(
+    () => buildBetPayload(
+      candidate,
+      { ...selection, market_id: 18, specifiers: "total=1.5", outcome_id: "12", outcome_name: "over 1.5" },
+      { sessionID: "session-1" },
+    ),
+    /Odd\/even.*even outcome/,
   );
 });
 

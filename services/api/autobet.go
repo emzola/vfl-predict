@@ -235,8 +235,8 @@ func (s *Server) autoBettingInternalPlaced(w http.ResponseWriter, r *http.Reques
 		writeError(w, http.StatusBadRequest, "match_id must be positive")
 		return
 	}
-	if input.QuotedOdds < 1.20 {
-		writeError(w, http.StatusBadRequest, "quoted odds must be at least 1.20 for martingale staking")
+	if input.QuotedOdds <= 1.00 {
+		writeError(w, http.StatusBadRequest, "quoted odds must be greater than 1.00")
 		return
 	}
 	service := autobet.NewService(s.DB)

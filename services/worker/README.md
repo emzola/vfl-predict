@@ -7,8 +7,9 @@ Phase 3 provides independent worker commands:
 - `cmd/prediction-worker` performs provisional or explicitly frozen round
   generation using the production `dynamic_bayesian_team_strength` policy:
   current-season model probabilities are stored with verified pre-cutoff
-  bookmaker markets; auto-betting ranks eligible rounds by the positive
-  Dynamic Bayesian Over 2.5-versus-bookmaker Over 2.5 difference.
+  bookmaker markets; auto-betting selects the #1 frozen prediction in each
+  round using the positive Dynamic Bayesian Over 2.5-versus-bookmaker Over 2.5
+  difference, with model probability as the fallback.
 - `cmd/forward-settle` settles frozen predictions and records forward paper
   metrics.
 
@@ -30,6 +31,12 @@ After a complete frozen or settled run exists, the worker advances to the next
 eligible round. The dashboard's Future Rounds endpoint also excludes rounds
 whose kickoff has passed and rounds that already have a complete official run,
 so old provisional revisions cannot remain visible indefinitely.
+
+The separate Node auto-betting worker places one Odd/even bet on even for the
+#1-ranked frozen prediction in each round. It uses the configured base stake
+unchanged for every bet; prior results, open bets, and quote size never resize
+it. It accepts any valid active quote above 1.00, progresses independently
+across rounds, and settles the ledger from the final score parity.
 
 For one-off or controlled operations, `-freeze` remains available and forces
 the requested run to use the official frozen status. `-auto-freeze` is intended

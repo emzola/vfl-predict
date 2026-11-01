@@ -162,165 +162,47 @@ func TestRoundMoneyRoundsToTwoDecimals(t *testing.T) {
 	}
 }
 
-func TestOver15SettlementDecisionSettlesConfirmedWinsEarly(t *testing.T) {
-	status, score, settled := over15SettlementDecision("unknown", true, &matchScore{Home: 2, Away: 0}, nil, nil)
+func TestOddEvenSettlementDecisionUsesFinalParity(t *testing.T) {
+	status, score, settled := oddEvenSettlementDecision("unknown", true, &matchScore{Home: 2, Away: 0}, nil, &matchScore{Home: 2, Away: 0})
 	if !settled || status != "won" || score == nil || score.Home != 2 || score.Away != 0 {
-		t.Fatalf("early win decision=(%s, %+v, %v)", status, score, settled)
+		t.Fatalf("final even decision=(%s, %+v, %v)", status, score, settled)
+	}
+
+	status, score, settled = oddEvenSettlementDecision("unknown", true, &matchScore{Home: 1, Away: 0}, nil, &matchScore{Home: 1, Away: 0})
+	if !settled || status != "lost" || score == nil || score.Home != 1 || score.Away != 0 {
+		t.Fatalf("final odd decision=(%s, %+v, %v)", status, score, settled)
 	}
 }
 
-func TestOver15SettlementDecisionWaitsForLossConfirmation(t *testing.T) {
-	status, score, settled := over15SettlementDecision("unknown", true, &matchScore{Home: 1, Away: 0}, nil, nil)
+func TestOddEvenSettlementDecisionWaitsForFinalScore(t *testing.T) {
+	status, score, settled := oddEvenSettlementDecision("unknown", true, &matchScore{Home: 1, Away: 0}, &matchScore{Home: 1, Away: 0}, nil)
 	if settled || status != "" || score != nil {
-		t.Fatalf("unfinished loss decision=(%s, %+v, %v)", status, score, settled)
+		t.Fatalf("unfinished parity decision=(%s, %+v, %v)", status, score, settled)
 	}
 
-	status, score, settled = over15SettlementDecision("completed", false, &matchScore{Home: 1, Away: 0}, nil, nil)
+	status, score, settled = oddEvenSettlementDecision("completed", false, &matchScore{Home: 1, Away: 0}, nil, nil)
 	if !settled || status != "lost" || score == nil {
-		t.Fatalf("completed loss decision=(%s, %+v, %v)", status, score, settled)
+		t.Fatalf("completed odd decision=(%s, %+v, %v)", status, score, settled)
 	}
 }
 
-func TestApplySettledResultToRecoveryTracksLossesAfterEarlierWins(t *testing.T) {
-	// A profitable earlier round must not hide a later loss. The recovery
-	// balance is based on the current settlement sequence, not season net profit.
-	recovery := applySettledResultToRecovery(0, "won", 50, 32.50)
-	recovery = applySettledResultToRecovery(recovery, "lost", 50, -49.99)
-	if recovery != 50 {
-		t.Fatalf("recovery after earlier win and later loss=%v want 50", recovery)
+func TestDetermineFlatStakeAlwaysUsesConfiguredBaseStake(t *testing.T) {
+	for _, baseStake := range []float64{50, 50.567, 5000} {
+		got, err := determineFlatStake(baseStake)
+		if err != nil {
+			t.Fatalf("determineFlatStake(%v) error: %v", baseStake, err)
+		}
+		want := roundMoney(baseStake)
+		if math.Abs(got-want) > 1e-9 {
+			t.Fatalf("determineFlatStake(%v)=%v want %v", baseStake, got, want)
+		}
 	}
 }
 
-func TestApplySettledResultToRecoveryUsesWinningsToReduceOutstandingLoss(t *testing.T) {
-	recovery := applySettledResultToRecovery(0, "lost", 50, -49.99)
-	recovery = applySettledResultToRecovery(recovery, "won", 50, 32.50)
-	if recovery != 17.50 {
-		t.Fatalf("recovery after partial win=%v want 17.50", recovery)
-	}
-	recovery = applySettledResultToRecovery(recovery, "won", 50, 20)
-	if recovery != 0 {
-		t.Fatalf("recovery after full recovery=%v want 0", recovery)
-	}
-}
-
-func TestDetermineMartingaleStake(t *testing.T) {
-	tests := []struct {
-		name            string
-		baseStake       float64
-		unrecoveredLoss float64
-		pendingStake    float64
-		quotedOdds      float64
-		want            float64
-	}{
-		{
-			name:       "fresh cycle starts at base stake",
-			baseStake:  5000,
-			quotedOdds: 1.30,
-			want:       5000,
-		},
-		{
-			name:       "minimum odds are accepted",
-			baseStake:  50,
-			quotedOdds: 1.20,
-			want:       50,
-		},
-		{
-			name:            "recovers outstanding loss and preserves base-stake profit",
-			baseStake:       5000,
-			unrecoveredLoss: 5000,
-			quotedOdds:      1.30,
-			want:            21666.67,
-		},
-		{
-			name:            "screenshot scenario does not fall back to base stake",
-			baseStake:       50,
-			unrecoveredLoss: 50,
-			quotedOdds:      1.65,
-			want:            126.93,
-		},
-		{
-			name:         "includes unsettled exposure",
-			baseStake:    50,
-			pendingStake: 50,
-			quotedOdds:   1.20,
-			want:         300,
-		},
-		{
-			name:            "zero outstanding loss starts at base stake",
-			baseStake:       50,
-			unrecoveredLoss: 0,
-			quotedOdds:      1.30,
-			want:            50,
-		},
-	}
-
-	for _, tc := range tests {
-		t.Run(tc.name, func(t *testing.T) {
-			got, err := determineMartingaleStake(tc.baseStake, tc.unrecoveredLoss, tc.pendingStake, tc.quotedOdds)
-			if err != nil {
-				t.Fatalf("determineMartingaleStake error: %v", err)
-			}
-			if math.Abs(got-tc.want) > 1e-9 {
-				t.Fatalf("determineMartingaleStake=%v want %v", got, tc.want)
-			}
-		})
-	}
-}
-
-func TestDetermineMartingaleStakeAcceptsValidOddsBelowLegacyMinimum(t *testing.T) {
-	got, err := determineMartingaleStake(50, 0, 0, 1.19)
-	if err != nil {
-		t.Fatalf("determineMartingaleStake error: %v", err)
-	}
-	if math.Abs(got-50) > 1e-9 {
-		t.Fatalf("determineMartingaleStake=%v want 50", got)
-	}
-}
-
-func TestOddsAllowedForRound(t *testing.T) {
-	tests := []struct {
-		name  string
-		round int
-		odds  float64
-		want  bool
-	}{
-		{name: "minimum odds remain required through round 25", round: 25, odds: 1.19, want: false},
-		{name: "minimum odds are accepted through round 25", round: 25, odds: 1.20, want: true},
-		{name: "lower odds are accepted after round 25", round: 26, odds: 1.19, want: true},
-		{name: "odds at or below 1.00 remain invalid", round: 26, odds: 1.00, want: false},
-	}
-	for _, tc := range tests {
-		t.Run(tc.name, func(t *testing.T) {
-			if got := oddsAllowedForRound(tc.round, tc.odds); got != tc.want {
-				t.Fatalf("oddsAllowedForRound(%d, %.2f)=%t want %t", tc.round, tc.odds, got, tc.want)
-			}
-		})
-	}
-}
-
-func TestPostRound25WinGate(t *testing.T) {
-	tests := []struct {
-		name              string
-		lastWinningRound  int
-		round25Status     string
-		previousBetStatus string
-		wantPause         bool
-	}{
-		{name: "no winning bet yet", lastWinningRound: 0, wantPause: false},
-		{name: "round 24 win does not pause before round 25", lastWinningRound: 24, wantPause: false},
-		{name: "round 25 win pauses", lastWinningRound: 25, wantPause: true},
-		{name: "round 25 loss followed by round 26 win pauses", lastWinningRound: 26, wantPause: true},
-		{name: "round 25 skipped and previous placed bet won", lastWinningRound: 24, round25Status: "skipped", previousBetStatus: "won", wantPause: true},
-		{name: "round 25 skipped and previous placed bet lost continues", lastWinningRound: 24, round25Status: "skipped", previousBetStatus: "lost", wantPause: false},
-		{name: "round 25 skipped and previous placed bet was void continues", lastWinningRound: 24, round25Status: "skipped", previousBetStatus: "void", wantPause: false},
-		{name: "round 25 void with an earlier win continues", lastWinningRound: 24, round25Status: "void", previousBetStatus: "won", wantPause: false},
-	}
-	for _, tc := range tests {
-		t.Run(tc.name, func(t *testing.T) {
-			got := postRound25WinPause(tc.lastWinningRound, tc.round25Status, tc.previousBetStatus)
-			if got != tc.wantPause {
-				t.Fatalf("post-round-25 win pause=%t want %t", got, tc.wantPause)
-			}
-		})
+func TestDetermineFlatStakeRejectsInvalidBaseStake(t *testing.T) {
+	for _, baseStake := range []float64{0, -1, math.NaN(), math.Inf(1)} {
+		if _, err := determineFlatStake(baseStake); err == nil {
+			t.Fatalf("determineFlatStake(%v) accepted invalid base stake", baseStake)
+		}
 	}
 }
