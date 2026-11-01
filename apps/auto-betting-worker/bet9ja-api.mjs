@@ -487,7 +487,7 @@ export function buildBetPayload(candidate, selection, {
   if (String(selectionID) !== EVEN_SELECTION_ID || String(marketName).trim().toLowerCase() !== "odd/even" || String(outcomeName).trim().toLowerCase() !== "even") {
     throw new Bet9jaConfigurationError("The ticket configuration must select Odd/even — even.");
   }
-  if (!Number.isFinite(decimalOdds) || decimalOdds <= VALID_ODDS_FLOOR) throw new Bet9jaConfigurationError("The live selection odds must be greater than 1.00 for flat staking.");
+  if (!Number.isFinite(decimalOdds) || decimalOdds <= VALID_ODDS_FLOOR) throw new Bet9jaConfigurationError("The live selection odds must be greater than 1.00 for martingale recovery.");
   if (!Number.isFinite(stake) || stake <= 0) throw new Bet9jaConfigurationError("The candidate stake is invalid.");
   if (!Number.isFinite(scheduledAt) || scheduledAt <= 0) throw new Bet9jaConfigurationError("The candidate kickoff time is invalid.");
   if (!Number.isSafeInteger(normalizedBookmakerID) || normalizedBookmakerID <= 0) throw new Bet9jaConfigurationError("The Bet9ja bookmaker id is invalid.");

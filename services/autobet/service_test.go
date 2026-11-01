@@ -186,23 +186,63 @@ func TestOddEvenSettlementDecisionWaitsForFinalScore(t *testing.T) {
 	}
 }
 
-func TestDetermineFlatStakeAlwaysUsesConfiguredBaseStake(t *testing.T) {
-	for _, baseStake := range []float64{50, 50.567, 5000} {
-		got, err := determineFlatStake(baseStake)
-		if err != nil {
-			t.Fatalf("determineFlatStake(%v) error: %v", baseStake, err)
-		}
-		want := roundMoney(baseStake)
-		if math.Abs(got-want) > 1e-9 {
-			t.Fatalf("determineFlatStake(%v)=%v want %v", baseStake, got, want)
-		}
+func TestApplySettledResultToRecoveryTracksLossesAndMissedProfits(t *testing.T) {
+	recovery := applySettledResultToRecovery(recoveryState{}, "lost", 50, 1.65, -50)
+	if recovery.UnrecoveredLoss != 50 || recovery.MissedProfit != 32.50 || recovery.obligation() != 82.50 {
+		t.Fatalf("recovery after loss=%+v obligation=%v", recovery, recovery.obligation())
+	}
+
+	recovery = applySettledResultToRecovery(recovery, "lost", 176.93, 1.65, -176.93)
+	if recovery.UnrecoveredLoss != 226.93 || recovery.MissedProfit != 147.50 || recovery.obligation() != 374.43 {
+		t.Fatalf("recovery after recovery loss=%+v obligation=%v", recovery, recovery.obligation())
 	}
 }
 
-func TestDetermineFlatStakeRejectsInvalidBaseStake(t *testing.T) {
-	for _, baseStake := range []float64{0, -1, math.NaN(), math.Inf(1)} {
-		if _, err := determineFlatStake(baseStake); err == nil {
-			t.Fatalf("determineFlatStake(%v) accepted invalid base stake", baseStake)
+func TestApplySettledResultToRecoveryUsesWinningProfitToReduceOutstandingBalances(t *testing.T) {
+	recovery := applySettledResultToRecovery(recoveryState{}, "lost", 50, 1.65, -50)
+	recovery = applySettledResultToRecovery(recovery, "won", 126.93, 1.65, 32.50)
+	if recovery.UnrecoveredLoss != 17.50 || recovery.MissedProfit != 32.50 || recovery.obligation() != 50 {
+		t.Fatalf("recovery after partial win=%+v obligation=%v", recovery, recovery.obligation())
+	}
+
+	recovery = applySettledResultToRecovery(recovery, "won", 176.93, 1.65, 82.50)
+	if recovery.obligation() != 0 {
+		t.Fatalf("recovery after full recovery win=%+v obligation=%v", recovery, recovery.obligation())
+	}
+}
+
+func TestDetermineMartingaleStakeCoversLossesMissedProfitAndCurrentProfit(t *testing.T) {
+	got, err := determineMartingaleStake(50, 50, 32.50, 1.65)
+	if err != nil {
+		t.Fatalf("determineMartingaleStake error: %v", err)
+	}
+	if math.Abs(got-176.93) > 1e-9 {
+		t.Fatalf("determineMartingaleStake=%v want 176.93", got)
+	}
+	if realizedProfit := roundMoney(got*1.65) - got; realizedProfit < 115.00 {
+		t.Fatalf("recovery profit=%v want at least 115.00", realizedProfit)
+	}
+}
+
+func TestDetermineMartingaleStakeStartsAtBaseAndRejectsInvalidInputs(t *testing.T) {
+	got, err := determineMartingaleStake(50, 0, 0, 1.65)
+	if err != nil {
+		t.Fatalf("determineMartingaleStake fresh cycle error: %v", err)
+	}
+	if math.Abs(got-50) > 1e-9 {
+		t.Fatalf("determineMartingaleStake fresh cycle=%v want 50", got)
+	}
+
+	invalid := [][4]float64{
+		{0, 0, 0, 1.65},
+		{50, -1, 0, 1.65},
+		{50, 0, -1, 1.65},
+		{50, 0, 0, 1.00},
+		{50, math.NaN(), 0, 1.65},
+	}
+	for _, values := range invalid {
+		if _, err := determineMartingaleStake(values[0], values[1], values[2], values[3]); err == nil {
+			t.Fatalf("determineMartingaleStake accepted invalid inputs %+v", values)
 		}
 	}
 }

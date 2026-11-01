@@ -72,7 +72,10 @@ Odd/even market's even outcome, removes the legacy 1.20/round-25 quote gate,
 and enforces one new-strategy decision per season round while preserving older
 ledger rows unchanged.
 
-`019_phase7_flat_staking.sql` makes flat staking explicit for the active
-strategy: every new placed bet uses the configured base stake, independently
-of prior results, open exposure, or live odds. Existing ledger rows remain
-unchanged.
+`019_phase7_flat_staking.sql` records the short-lived flat-staking behavior
+used after the Odd/even switch. Its historical ledger rows remain unchanged.
+
+`020_phase7_martingale_recovery.sql` makes the active recovery policy explicit:
+the worker waits for settlement and sizes each winning recovery bet to cover
+all outstanding principal losses, missed profits, and the current base-profit
+target. Existing ledger rows remain unchanged.

@@ -152,8 +152,8 @@ from the model's Over 2.5 probability versus the normalized bookmaker Over 2.5
 market ranking, then bets Odd/even — even once for that round. Use `-model bookmaker_first` to explicitly make bookmaker
 probabilities the primary 1X2 prediction, or `-model poisson` to run the
 statistical fallback policy directly.
-The wager uses the configured base stake on every round; previous results,
-open bets, and live odds do not change the stake.
+The wager uses martingale recovery sizing: a winning recovery bet covers all
+outstanding losses, missed profits, and the current base-profit target.
 
 ## Phase 2 research evaluation
 
