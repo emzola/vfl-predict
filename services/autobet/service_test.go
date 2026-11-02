@@ -174,8 +174,8 @@ func TestOddEvenSettlementDecisionUsesFinalParity(t *testing.T) {
 	}
 }
 
-func TestOddEvenBetCycleRepeatsEvenOdd(t *testing.T) {
-	want := []string{"even", "odd", "even", "odd", "even", "odd", "even", "odd"}
+func TestOddEvenBetCycleRepeatsConfiguredPattern(t *testing.T) {
+	want := []string{"even", "odd", "even", "odd", "odd", "even", "even", "odd", "even", "odd", "odd", "even"}
 	for index, expected := range want {
 		outcome := oddEvenBetCycle[index%len(oddEvenBetCycle)]
 		if outcome.Name != expected {

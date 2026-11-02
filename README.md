@@ -153,7 +153,7 @@ market ranking, then bets the next outcome in the repeating Odd/even cycle once
 for that round. Use `-model bookmaker_first` to explicitly make bookmaker
 probabilities the primary 1X2 prediction, or `-model poisson` to run the
 statistical fallback policy directly.
-The wager repeats the Odd/even outcome cycle even, odd. It uses
+The wager repeats the Odd/even outcome cycle even, odd, even, odd, odd, even. It uses
 martingale recovery sizing: a winning recovery bet covers all
 outstanding losses, missed profits, and the current base-profit target.
 The recovery cycle continues across season boundaries. Turning auto betting off

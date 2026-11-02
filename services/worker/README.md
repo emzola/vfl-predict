@@ -33,7 +33,8 @@ whose kickoff has passed and rounds that already have a complete official run,
 so old provisional revisions cannot remain visible indefinitely.
 
 The separate Node auto-betting worker places one Odd/even bet for the
-#1-ranked frozen prediction in each round, repeating even, odd.
+#1-ranked frozen prediction in each round, repeating even, odd, even, odd, odd,
+even.
 It waits for each bet to settle,
 then sizes the next wager to cover outstanding losses, missed profits, and the
 current base-profit target. It accepts any valid active quote above 1.00 and

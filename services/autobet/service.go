@@ -32,6 +32,10 @@ type betOutcome struct {
 var oddEvenBetCycle = [...]betOutcome{
 	{ID: evenOutcomeID, Name: "even", Position: 1},
 	{ID: oddOutcomeID, Name: "odd", Position: 2},
+	{ID: evenOutcomeID, Name: "even", Position: 3},
+	{ID: oddOutcomeID, Name: "odd", Position: 4},
+	{ID: oddOutcomeID, Name: "odd", Position: 5},
+	{ID: evenOutcomeID, Name: "even", Position: 6},
 }
 
 type Service struct {
