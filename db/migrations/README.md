@@ -84,7 +84,12 @@ target. Existing ledger rows remain unchanged.
 keep recovery across season boundaries. The service refreshes that cutoff when
 auto betting is turned off or re-enabled, so re-enabling starts a fresh cycle.
 
-`022_phase7_over_1_5_market_gate.sql` switches the active market back to Over
-1.5 goals. It selects one match per round using the highest normalized observed
-1X2 home or away probability strictly above 60%, while preserving historical
-ledger rows and the existing martingale recovery policy.
+`022_phase7_over_1_5_market_gate.sql` records the temporary Over 1.5 market
+gate. It selected one match per round using the highest normalized observed 1X2
+home or away probability strictly above 60%, while preserving historical
+ledger rows.
+
+`023_phase7_odd_even_flat_staking.sql` restores the Odd/even market with the
+same observed 1X2 qualification and one-match-per-round selection. New bets
+use the repeating even, odd, even, odd, odd, even cycle and the configured base
+stake; historical ledger rows remain unchanged.

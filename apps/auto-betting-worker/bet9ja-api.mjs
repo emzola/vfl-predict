@@ -7,10 +7,11 @@ const DEFAULT_INIT_REFERER = `${DEFAULT_AUTH_ORIGIN}/virtual/`;
 const DEFAULT_TICKET_ORIGIN = "https://launcherlive-vs001.akamaized.net";
 const DEFAULT_TICKET_REFERER = `${DEFAULT_TICKET_ORIGIN}/`;
 const VALID_ODDS_FLOOR = 1.00;
-const OVER_1_5_MARKET_ID = 18;
-const OVER_1_5_OUTCOME_ID = "12";
-const OVER_1_5_SPECIFIERS = "total=1.5";
-const OVER_1_5_SELECTION_ID = "uof:6/sr:sport:1/18/12?total=1.5";
+const ODD_EVEN_MARKET_ID = 26;
+const ODD_EVEN_OUTCOMES = Object.freeze({
+  odd: Object.freeze({ id: "70", selectionID: "uof:6/sr:sport:1/26/70" }),
+  even: Object.freeze({ id: "72", selectionID: "uof:6/sr:sport:1/26/72" }),
+});
 
 export class Bet9jaError extends Error {
   constructor(message, code = "bet9ja_error") {
@@ -466,8 +467,8 @@ export function buildBetPayload(candidate, selection, {
   limitID = 1424,
   selectionID = "",
   productType = "VFLM",
-  marketName = "Total Goals",
-  outcomeName = "over 1.5",
+  marketName = "Odd/even",
+  outcomeName = "",
   stakeScale = 10000,
   oddsScale = 10000,
 } = {}) {
@@ -482,19 +483,19 @@ export function buildBetPayload(candidate, selection, {
   const normalizedOddsScale = Number(oddsScale);
   const normalizedSessionID = String(sessionID || "").trim();
   const normalizedOutcomeID = String(selection.outcome_id || "").trim();
-  const normalizedMarketName = String(marketName || selection.market_name || "Total Goals").trim().toLowerCase();
   const normalizedSelectionOutcome = String(selection.outcome_name || "").trim().toLowerCase();
-  const configuredOutcomeName = String(outcomeName || selection.outcome_name || "over 1.5").trim().toLowerCase();
+  const outcomeConfig = ODD_EVEN_OUTCOMES[normalizedSelectionOutcome];
+  const configuredOutcomeName = String(outcomeName || normalizedSelectionOutcome).trim().toLowerCase();
   const candidateOutcome = String(candidate.bet_outcome || "").trim().toLowerCase();
-  const configuredSelectionID = String(selectionID || OVER_1_5_SELECTION_ID).trim();
+  const configuredSelectionID = String(selectionID || outcomeConfig?.selectionID || "").trim();
   if (!Number.isSafeInteger(matchID) || matchID <= 0) throw new Bet9jaConfigurationError("The candidate match id is invalid.");
-  if (Number(selection.market_id) !== OVER_1_5_MARKET_ID || String(selection.specifiers || "") !== OVER_1_5_SPECIFIERS || normalizedOutcomeID !== OVER_1_5_OUTCOME_ID) {
-    throw new Bet9jaConfigurationError("The live selection must be a valid Over 1.5 market outcome.");
+  if (Number(selection.market_id) !== ODD_EVEN_MARKET_ID || String(selection.specifiers || "") !== "" || !outcomeConfig || outcomeConfig.id !== normalizedOutcomeID) {
+    throw new Bet9jaConfigurationError("The live selection must be a valid Odd/even market outcome.");
   }
-  if (configuredSelectionID !== OVER_1_5_SELECTION_ID || !["total goals", "over/under", "over under"].includes(normalizedMarketName) || configuredOutcomeName !== "over 1.5" || (normalizedSelectionOutcome && normalizedSelectionOutcome !== configuredOutcomeName) || (candidateOutcome && candidateOutcome !== "over_1_5")) {
-    throw new Bet9jaConfigurationError("The ticket configuration must match the selected Over 1.5 outcome.");
+  if (configuredSelectionID !== outcomeConfig.selectionID || String(marketName).trim().toLowerCase() !== "odd/even" || configuredOutcomeName !== normalizedSelectionOutcome || (candidateOutcome && candidateOutcome !== normalizedSelectionOutcome)) {
+    throw new Bet9jaConfigurationError("The ticket configuration must match the selected Odd/even outcome.");
   }
-  if (!Number.isFinite(decimalOdds) || decimalOdds <= VALID_ODDS_FLOOR) throw new Bet9jaConfigurationError("The live selection odds must be greater than 1.00 for martingale recovery.");
+  if (!Number.isFinite(decimalOdds) || decimalOdds <= VALID_ODDS_FLOOR) throw new Bet9jaConfigurationError("The live selection odds must be greater than 1.00 for flat staking.");
   if (!Number.isFinite(stake) || stake <= 0) throw new Bet9jaConfigurationError("The candidate stake is invalid.");
   if (!Number.isFinite(scheduledAt) || scheduledAt <= 0) throw new Bet9jaConfigurationError("The candidate kickoff time is invalid.");
   if (!Number.isSafeInteger(normalizedBookmakerID) || normalizedBookmakerID <= 0) throw new Bet9jaConfigurationError("The Bet9ja bookmaker id is invalid.");
@@ -514,7 +515,7 @@ export function buildBetPayload(candidate, selection, {
   const homeProviderID = String(selection.home_team_provider_id || `sr:competitor:${homeUID}`);
   const awayProviderID = String(selection.away_team_provider_id || `sr:competitor:${awayUID}`);
   const round = Number(candidate.round);
-  const outcome = String(outcomeName || selection.outcome_name || "over 1.5");
+  const outcome = configuredOutcomeName;
   const seasonYear = String(selection.season_year || "").trim();
   if (!seasonYear) throw new Bet9jaConfigurationError("The current season provider year is required to place a bet.");
   const tournamentName = `Season ${seasonYear}`;
@@ -543,7 +544,7 @@ export function buildBetPayload(candidate, selection, {
       convertedOddsType: "dec",
       metaData: {
         lang: "EN-EN",
-        marketName: String(marketName || selection.market_name || "Total Goals"),
+        marketName: String(marketName || selection.market_name || "Odd/even"),
         outcomeName: outcome,
         outrightType: null,
         marketId: null,

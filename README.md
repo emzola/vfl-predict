@@ -150,15 +150,14 @@ It generates current-season model probabilities and records verified,
 point-in-time bookmaker markets. Auto-betting examines every frozen match in
 the next eligible round and selects the single match whose normalized observed
 1X2 home or away market probability is highest and strictly above 60%. It then
-places one Over 1.5 goals bet for that round. Use `-model bookmaker_first` to explicitly make bookmaker
-probabilities the primary 1X2 prediction, or `-model poisson` to run the
-statistical fallback policy directly; auto-betting requires the observed
-bookmaker 1X2 probability gate. The wager uses martingale recovery sizing: a
-winning recovery bet covers all
-outstanding losses, missed profits, and the current base-profit target.
-The recovery cycle continues across season boundaries. Turning auto betting off
-ends the current cycle, and re-enabling it starts a fresh cycle from the base
-stake and first even outcome.
+places one Odd/even bet for that round using the repeating outcome cycle even,
+odd, even, odd, odd, even. Use `-model bookmaker_first` to explicitly make
+bookmaker probabilities the primary 1X2 prediction, or `-model poisson` to run
+the statistical fallback policy directly; auto-betting requires the observed
+bookmaker 1X2 probability gate. Every wager uses the configured base stake
+with flat staking. The outcome cycle continues across season boundaries.
+Turning auto betting off ends the current cycle, and re-enabling it starts a
+fresh cycle from the first even outcome.
 
 ## Phase 2 research evaluation
 

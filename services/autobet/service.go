@@ -13,16 +13,32 @@ import (
 )
 
 const (
-	primaryKey            = "primary"
-	marketKey             = "over_1_5"
-	runtimeState          = "disabled"
-	validOddsFloor        = 1.00
-	selectionRule         = "highest_observed_1x2_market_probability_above_60"
-	stakingStrategy       = "martingale_recovery"
-	overOneFiveMarketID   = int64(18)
-	overOneFiveOutcomeID  = "12"
-	overOneFiveSpecifiers = "total=1.5"
+	primaryKey        = "primary"
+	marketKey         = "odd_even"
+	runtimeState      = "disabled"
+	validOddsFloor    = 1.00
+	selectionRule     = "highest_observed_1x2_market_probability_above_60"
+	stakingStrategy   = "flat_staking"
+	oddEvenMarketID   = int64(26)
+	oddOutcomeID      = "70"
+	evenOutcomeID     = "72"
+	oddEvenSpecifiers = ""
 )
+
+type betOutcome struct {
+	ID       string
+	Name     string
+	Position int
+}
+
+var oddEvenBetCycle = [...]betOutcome{
+	{ID: evenOutcomeID, Name: "even", Position: 1},
+	{ID: oddOutcomeID, Name: "odd", Position: 2},
+	{ID: evenOutcomeID, Name: "even", Position: 3},
+	{ID: oddOutcomeID, Name: "odd", Position: 4},
+	{ID: oddOutcomeID, Name: "odd", Position: 5},
+	{ID: evenOutcomeID, Name: "even", Position: 6},
+}
 
 type Service struct {
 	DB             *sql.DB
@@ -49,7 +65,7 @@ type Settings struct {
 	CredentialsConfigured bool       `json:"credentials_configured"`
 	MaskedUsername        string     `json:"masked_username,omitempty"`
 	CredentialsUpdatedAt  *time.Time `json:"credentials_updated_at,omitempty"`
-	RecoveryResetAt       time.Time  `json:"-"`
+	CycleResetAt          time.Time  `json:"-"`
 	UsernameCiphertext    string     `json:"-"`
 	PasswordCiphertext    string     `json:"-"`
 	UpdatedAt             time.Time  `json:"updated_at"`
@@ -168,7 +184,7 @@ type WorkerTask struct {
 }
 
 // BetSelection contains the latest executable provider quote for the selected
-// Over 1.5 outcome. It is returned only on the internal worker task response;
+// Odd/even outcome. It is returned only on the internal worker task response;
 // dashboard responses use DashboardState and therefore never expose it.
 type BetSelection struct {
 	MatchID              int64     `json:"match_id"`
@@ -210,26 +226,6 @@ type SettlementReport struct {
 	LostCount    int     `json:"lost_count"`
 	VoidCount    int     `json:"void_count"`
 	TotalProfit  float64 `json:"total_profit"`
-}
-
-// recoveryState tracks the outstanding amount a future winning bet must
-// recover. A losing bet contributes both its lost stake and the profit that
-// would have been earned at its quoted odds.
-type recoveryState struct {
-	UnrecoveredLoss float64
-	MissedProfit    float64
-}
-
-func (r recoveryState) obligation() float64 {
-	loss := r.UnrecoveredLoss
-	if !isFinite(loss) || loss < 0 {
-		loss = 0
-	}
-	missedProfit := r.MissedProfit
-	if !isFinite(missedProfit) || missedProfit < 0 {
-		missedProfit = 0
-	}
-	return roundMoney(loss + missedProfit)
 }
 
 type probability struct {
@@ -383,16 +379,13 @@ func (s *Service) LoadDashboard(ctx context.Context) (DashboardState, error) {
 		}
 		state.NextCandidates = candidates
 		if len(state.NextCandidates) > 0 {
-			selection, selectionErr := s.loadBetSelection(ctx, state.NextCandidates[0].MatchID)
-			if selectionErr != nil {
-				return DashboardState{}, selectionErr
+			outcome, outcomeErr := s.nextBetOutcome(ctx, settings.CycleResetAt)
+			if outcomeErr != nil {
+				return DashboardState{}, outcomeErr
 			}
-			if selection != nil && oddsAllowedForBet(selection.DecimalOdds) {
-				if stake, stakeErr := determineMartingaleStake(settings.BaseStake, summary.UnrecoveredLoss, summary.MissedProfit, selection.DecimalOdds); stakeErr == nil {
-					state.NextCandidates[0].StakeAmount = stake
-					summary.NextStake = stake
-				}
-			}
+			state.NextCandidates[0].BetOutcome = outcome.Name
+			state.NextCandidates[0].BetOutcomeID = outcome.ID
+			state.NextCandidates[0].StakeAmount = summary.NextStake
 		}
 		if len(candidates) > 0 {
 			state.NextCandidate = &state.NextCandidates[0]
@@ -554,24 +547,18 @@ func (s *Service) NextTask(ctx context.Context) (*WorkerTask, error) {
 		return task, nil
 	}
 	candidate := candidates[0]
-	selection, selectionErr := s.loadBetSelection(ctx, candidate.MatchID)
+	outcome, outcomeErr := s.nextBetOutcome(ctx, settings.CycleResetAt)
+	if outcomeErr != nil {
+		return nil, outcomeErr
+	}
+	selection, selectionErr := s.loadBetSelection(ctx, candidate.MatchID, outcome.ID)
 	if selectionErr != nil {
 		return nil, selectionErr
 	}
 	candidateCopy := candidate
-	if selection != nil && oddsAllowedForBet(selection.DecimalOdds) {
-		stake, stakeErr := determineMartingaleStake(settings.BaseStake, summary.UnrecoveredLoss, summary.MissedProfit, selection.DecimalOdds)
-		if stakeErr != nil {
-			task.Status = "idle"
-			return task, nil
-		}
-		candidateCopy.StakeAmount = stake
-		summary.NextStake = stake
-	} else if selection != nil {
-		// The worker records this as a skipped round when the quote does not
-		// meet the provider validity requirement. No stake is submitted.
-		candidateCopy.StakeAmount = summary.NextStake
-	}
+	candidateCopy.BetOutcome = outcome.Name
+	candidateCopy.BetOutcomeID = outcome.ID
+	candidateCopy.StakeAmount = summary.NextStake
 	task.Bets = append(task.Bets, BetTask{Candidate: &candidateCopy, Selection: selection})
 	task.Candidate = task.Bets[0].Candidate
 	task.Selection = task.Bets[0].Selection
@@ -585,22 +572,26 @@ func (s *Service) prepareNextBet(ctx context.Context, seasonID string, settings 
 		return nil, err
 	}
 	candidateCopy := candidates[0]
-	selection, err := s.loadBetSelection(ctx, candidateCopy.MatchID)
+	outcome, err := s.nextBetOutcome(ctx, settings.CycleResetAt)
 	if err != nil {
 		return nil, err
 	}
-	if selection != nil && oddsAllowedForBet(selection.DecimalOdds) {
-		stake, stakeErr := determineMartingaleStake(settings.BaseStake, summary.UnrecoveredLoss, summary.MissedProfit, selection.DecimalOdds)
-		if stakeErr == nil {
-			candidateCopy.StakeAmount = stake
-		}
+	candidateCopy.BetOutcome = outcome.Name
+	candidateCopy.BetOutcomeID = outcome.ID
+	candidateCopy.StakeAmount = summary.NextStake
+	selection, err := s.loadBetSelection(ctx, candidateCopy.MatchID, outcome.ID)
+	if err != nil {
+		return nil, err
 	}
 	return &BetTask{Candidate: &candidateCopy, Selection: selection}, nil
 }
 
-func (s *Service) loadBetSelection(ctx context.Context, matchID int64) (*BetSelection, error) {
+func (s *Service) loadBetSelection(ctx context.Context, matchID int64, outcomeID string) (*BetSelection, error) {
 	if matchID <= 0 {
 		return nil, errors.New("invalid betting match id")
+	}
+	if outcomeID != oddOutcomeID && outcomeID != evenOutcomeID {
+		return nil, errors.New("invalid Odd/even outcome")
 	}
 	var selection BetSelection
 	err := s.DB.QueryRowContext(ctx, `
@@ -627,7 +618,7 @@ WHERE f.match_id = $1
   AND o.outcome_active = 1
   AND o.observation_kind = 'live_observation'
 ORDER BY o.last_observed_at DESC, o.source_timestamp_at DESC, o.odds_snapshot_id DESC
-LIMIT 1`, matchID, overOneFiveMarketID, overOneFiveSpecifiers, overOneFiveOutcomeID).Scan(
+LIMIT 1`, matchID, oddEvenMarketID, oddEvenSpecifiers, outcomeID).Scan(
 		&selection.MatchID,
 		&selection.SeasonYear,
 		&selection.HomeTeamUID, &selection.HomeTeamProviderID, &selection.HomeTeamAbbreviation,
@@ -645,6 +636,25 @@ LIMIT 1`, matchID, overOneFiveMarketID, overOneFiveSpecifiers, overOneFiveOutcom
 	selection.SourceTimestampAt = selection.SourceTimestampAt.UTC()
 	selection.ObservedAt = selection.ObservedAt.UTC()
 	return &selection, nil
+}
+
+func (s *Service) nextBetOutcome(ctx context.Context, resetAt time.Time) (betOutcome, error) {
+	if resetAt.IsZero() {
+		resetAt = time.Unix(0, 0).UTC()
+	}
+	var placedCount int64
+	err := s.DB.QueryRowContext(ctx, `
+SELECT count(*)
+FROM auto_betting_rounds
+WHERE created_at >= $1
+  AND market_key = $2
+  AND status IN ('placed', 'won', 'lost', 'void')
+  AND decision_payload ? 'bet_outcome'`, resetAt, marketKey).Scan(&placedCount)
+	if err != nil {
+		return betOutcome{}, err
+	}
+	position := int(placedCount % int64(len(oddEvenBetCycle)))
+	return oddEvenBetCycle[position], nil
 }
 
 func (s *Service) UpdateRuntime(ctx context.Context, update RuntimeUpdate) error {
@@ -685,7 +695,11 @@ WHERE runtime_key = $1`, primaryKey, state, truncate(update.WorkerID, 128), upda
 }
 
 func (s *Service) RecordSkip(ctx context.Context, seasonID string, round int, matchID int64, reason string, observedOdds *float64) error {
-	_, _, candidate, err := s.validateCandidateAction(ctx, seasonID, round, matchID)
+	settings, _, candidate, err := s.validateCandidateAction(ctx, seasonID, round, matchID)
+	if err != nil {
+		return err
+	}
+	outcome, err := s.nextBetOutcome(ctx, settings.CycleResetAt)
 	if err != nil {
 		return err
 	}
@@ -697,8 +711,9 @@ func (s *Service) RecordSkip(ctx context.Context, seasonID string, round int, ma
 		"point_in_time_verified":      candidate.PointInTimeVerified,
 		"selection_rule":              selectionRule,
 		"staking_strategy":            stakingStrategy,
-		"bet_outcome":                 candidate.BetOutcome,
-		"bet_outcome_id":              candidate.BetOutcomeID,
+		"bet_outcome":                 outcome.Name,
+		"bet_outcome_id":              outcome.ID,
+		"bet_cycle_position":          outcome.Position,
 	}
 	if candidate.DecisionMarketDifference != nil {
 		payload["decision_market_difference"] = *candidate.DecisionMarketDifference
@@ -721,34 +736,34 @@ INSERT INTO auto_betting_rounds (
 }
 
 func (s *Service) RecordPlaced(ctx context.Context, seasonID string, round int, matchID int64, quotedOdds, _ float64, betReference string) error {
-	settings, summary, candidate, err := s.validateCandidateAction(ctx, seasonID, round, matchID)
+	settings, _, candidate, err := s.validateCandidateAction(ctx, seasonID, round, matchID)
 	if err != nil {
 		return err
 	}
 	if !isFinite(quotedOdds) || quotedOdds <= validOddsFloor {
 		return errors.New("quoted odds must be greater than 1.00")
 	}
-	stake, stakeErr := determineMartingaleStake(settings.BaseStake, summary.UnrecoveredLoss, summary.MissedProfit, quotedOdds)
-	if stakeErr != nil {
-		return stakeErr
+	outcome, err := s.nextBetOutcome(ctx, settings.CycleResetAt)
+	if err != nil {
+		return err
+	}
+	stake := determineNextStake(settings.BaseStake)
+	if stake <= 0 {
+		return errors.New("base stake must be positive for flat staking")
 	}
 	payload := map[string]any{
-		"decision_basis":                 candidate.DecisionBasis,
-		"decision_outcome":               candidate.DecisionOutcome,
-		"decision_probability":           candidate.DecisionProbability,
-		"observed_market_probability":    candidate.MarketProbability,
-		"point_in_time_verified":         candidate.PointInTimeVerified,
-		"selection_rule":                 selectionRule,
-		"staking_strategy":               stakingStrategy,
-		"base_stake":                     settings.BaseStake,
-		"settled_profit_before_bet":      summary.TotalProfit,
-		"unrecovered_loss_before_bet":    summary.UnrecoveredLoss,
-		"missed_profit_before_bet":       summary.MissedProfit,
-		"recovery_obligation_before_bet": summary.RecoveryObligation,
-		"current_intended_profit":        roundMoney(settings.BaseStake * (quotedOdds - 1)),
-		"placed_stake":                   stake,
-		"bet_outcome":                    candidate.BetOutcome,
-		"bet_outcome_id":                 candidate.BetOutcomeID,
+		"decision_basis":              candidate.DecisionBasis,
+		"decision_outcome":            candidate.DecisionOutcome,
+		"decision_probability":        candidate.DecisionProbability,
+		"observed_market_probability": candidate.MarketProbability,
+		"point_in_time_verified":      candidate.PointInTimeVerified,
+		"selection_rule":              selectionRule,
+		"staking_strategy":            stakingStrategy,
+		"base_stake":                  settings.BaseStake,
+		"placed_stake":                stake,
+		"bet_outcome":                 outcome.Name,
+		"bet_outcome_id":              outcome.ID,
+		"bet_cycle_position":          outcome.Position,
 	}
 	if candidate.DecisionMarketDifference != nil {
 		payload["decision_market_difference"] = *candidate.DecisionMarketDifference
@@ -1059,8 +1074,6 @@ ORDER BY p.season_id, p.round_no, pr.match_id,
 			MarketProbability:        item.MarketProbability,
 			PointInTimeVerified:      item.PointInTimeVerified,
 			OddsObservedAt:           item.OddsObservedAt,
-			BetOutcome:               "over_1_5",
-			BetOutcomeID:             overOneFiveOutcomeID,
 			StakeAmount:              stake,
 		})
 	}
@@ -1178,20 +1191,20 @@ LIMIT 1`).Scan(&seasonID)
 func (s *Service) loadSettings(ctx context.Context) (Settings, error) {
 	var settings Settings
 	var maskedUsername, usernameCiphertext, passwordCiphertext sql.NullString
-	var recoveryResetAt sql.NullTime
+	var cycleResetAt sql.NullTime
 	var credentialsUpdatedAt sql.NullTime
 	err := s.DB.QueryRowContext(ctx, `
 SELECT enabled, base_stake::double precision, profit_target::double precision,
        recovery_reset_at, updated_at, COALESCE(bet9ja_username_masked, ''), credentials_updated_at,
        COALESCE(bet9ja_username_ciphertext, ''), COALESCE(bet9ja_password_ciphertext, '')
 FROM auto_betting_settings
-WHERE setting_key = $1`, primaryKey).Scan(&settings.Enabled, &settings.BaseStake, &settings.ProfitTarget, &recoveryResetAt, &settings.UpdatedAt, &maskedUsername, &credentialsUpdatedAt, &usernameCiphertext, &passwordCiphertext)
+WHERE setting_key = $1`, primaryKey).Scan(&settings.Enabled, &settings.BaseStake, &settings.ProfitTarget, &cycleResetAt, &settings.UpdatedAt, &maskedUsername, &credentialsUpdatedAt, &usernameCiphertext, &passwordCiphertext)
 	if err != nil {
 		return Settings{}, err
 	}
 	settings.UpdatedAt = settings.UpdatedAt.UTC()
-	if recoveryResetAt.Valid {
-		settings.RecoveryResetAt = recoveryResetAt.Time.UTC()
+	if cycleResetAt.Valid {
+		settings.CycleResetAt = cycleResetAt.Time.UTC()
 	}
 	if maskedUsername.Valid {
 		settings.MaskedUsername = maskedUsername.String
@@ -1272,17 +1285,9 @@ WHERE season_id = $1`, seasonID).Scan(&summary.TotalStaked, &summary.TotalReturn
 	if err != nil {
 		return SeasonSummary{}, err
 	}
-	recovery, err := s.loadRecoveryState(ctx, settings.RecoveryResetAt)
-	if err != nil {
-		return SeasonSummary{}, err
-	}
-	summary.UnrecoveredLoss = recovery.UnrecoveredLoss
-	summary.MissedProfit = recovery.MissedProfit
-	summary.RecoveryObligation = recovery.obligation()
-	// Recovery is intentionally loaded across season boundaries. Until a live
-	// Over 1.5 quote is loaded, expose the base stake as the safe fallback; NextTask
-	// and the dashboard replace it with the recovery stake when a valid quote is
-	// available.
+	// Flat staking always uses the configured base stake. The reset cutoff is
+	// retained for the Odd/even cycle position, which continues across seasons
+	// until auto betting is turned off or re-enabled.
 	summary.NextStake = determineNextStake(settings.BaseStake)
 	summary.ProfitTargetReached = summary.TotalProfit >= settings.ProfitTarget
 	if summary.ProfitTargetReached {
@@ -1290,81 +1295,6 @@ WHERE season_id = $1`, seasonID).Scan(&summary.TotalStaked, &summary.TotalReturn
 		summary.PauseReason = fmt.Sprintf("Season profit target of %.2f naira reached", settings.ProfitTarget)
 	}
 	return summary, nil
-}
-
-func (s *Service) loadRecoveryState(ctx context.Context, resetAt time.Time) (recoveryState, error) {
-	if resetAt.IsZero() {
-		resetAt = time.Unix(0, 0).UTC()
-	}
-	rows, err := s.DB.QueryContext(ctx, `
-SELECT status, stake_amount::double precision, quoted_odds::double precision,
-       COALESCE(realized_profit, 0)::double precision
-FROM auto_betting_rounds
-WHERE created_at >= $1
-  AND status IN ('won', 'lost', 'void')
-ORDER BY COALESCE(settled_at, created_at), created_at, auto_betting_round_id`, resetAt)
-	if err != nil {
-		return recoveryState{}, err
-	}
-	defer rows.Close()
-
-	recovery := recoveryState{}
-	for rows.Next() {
-		var status string
-		var stake, realizedProfit float64
-		var quotedOdds sql.NullFloat64
-		if err := rows.Scan(&status, &stake, &quotedOdds, &realizedProfit); err != nil {
-			return recoveryState{}, err
-		}
-		recovery = applySettledResultToRecovery(recovery, status, stake, nullableFloat(quotedOdds), realizedProfit)
-	}
-	if err := rows.Err(); err != nil {
-		return recoveryState{}, err
-	}
-	return recovery, nil
-}
-
-func applySettledResultToRecovery(recovery recoveryState, status string, stake, quotedOdds, realizedProfit float64) recoveryState {
-	if !isFinite(recovery.UnrecoveredLoss) || recovery.UnrecoveredLoss < 0 {
-		recovery.UnrecoveredLoss = 0
-	}
-	if !isFinite(recovery.MissedProfit) || recovery.MissedProfit < 0 {
-		recovery.MissedProfit = 0
-	}
-	switch status {
-	case "lost":
-		if isFinite(stake) && stake > 0 {
-			recovery.UnrecoveredLoss += stake
-			if isFinite(quotedOdds) && quotedOdds > validOddsFloor {
-				recovery.MissedProfit += roundMoney(stake * (quotedOdds - 1))
-			}
-		}
-	case "won":
-		profit := realizedProfit
-		if !isFinite(profit) || profit <= 0 {
-			break
-		}
-		// Apply realized winnings to principal loss first, then to the
-		// profit that was missed on earlier losing bets. A fully sized
-		// recovery win clears both balances.
-		if profit >= recovery.UnrecoveredLoss {
-			profit -= recovery.UnrecoveredLoss
-			recovery.UnrecoveredLoss = 0
-		} else {
-			recovery.UnrecoveredLoss = roundMoney(recovery.UnrecoveredLoss - profit)
-			profit = 0
-		}
-		if profit > 0 {
-			if profit >= recovery.MissedProfit {
-				recovery.MissedProfit = 0
-			} else {
-				recovery.MissedProfit = roundMoney(recovery.MissedProfit - profit)
-			}
-		}
-	}
-	recovery.UnrecoveredLoss = roundMoney(recovery.UnrecoveredLoss)
-	recovery.MissedProfit = roundMoney(recovery.MissedProfit)
-	return recovery
 }
 
 func (s *Service) loadRecentRounds(ctx context.Context, limit int) ([]RoundRecord, error) {
@@ -1445,65 +1375,8 @@ func determineNextStake(baseStake float64) float64 {
 	return roundMoney(baseStake)
 }
 
-func determineMartingaleStake(baseStake, unrecoveredLoss, missedProfit, quotedOdds float64) (float64, error) {
-	if !isFinite(baseStake) || baseStake <= 0 {
-		return 0, errors.New("base stake must be positive for martingale staking")
-	}
-	if !isFinite(unrecoveredLoss) || unrecoveredLoss < 0 || !isFinite(missedProfit) || missedProfit < 0 {
-		return 0, errors.New("martingale recovery balances are invalid")
-	}
-	if !isFinite(quotedOdds) || quotedOdds <= validOddsFloor {
-		return 0, errors.New("quoted odds must be greater than 1.00 for martingale staking")
-	}
-
-	// The winning bet must return the current base-profit target plus every
-	// outstanding principal loss and every missed profit from earlier losses.
-	currentIntendedProfit := baseStake * (quotedOdds - 1)
-	if !isFinite(currentIntendedProfit) {
-		return 0, errors.New("martingale recovery target could not be calculated")
-	}
-	recoveryTarget := roundMoney(unrecoveredLoss + missedProfit + currentIntendedProfit)
-	if !isFinite(recoveryTarget) || recoveryTarget <= 0 {
-		return 0, errors.New("martingale recovery target could not be calculated")
-	}
-	stake := recoveryTarget / (quotedOdds - 1)
-	if !isFinite(stake) || stake <= 0 {
-		return 0, errors.New("martingale recovery stake could not be calculated")
-	}
-	stake = roundUpMoney(stake)
-	// Settlement rounds the return to cents. Increase the stake as needed so
-	// the recorded realized profit still covers the full recovery target.
-	for attempt := 0; attempt < 100; attempt++ {
-		realizedProfit := roundMoney(stake*quotedOdds) - stake
-		if realizedProfit+1e-9 >= recoveryTarget {
-			return stake, nil
-		}
-		shortfall := recoveryTarget - realizedProfit
-		additionalStake := roundUpMoney(shortfall / (quotedOdds - 1))
-		if additionalStake < 0.01 {
-			additionalStake = 0.01
-		}
-		stake = roundUpMoney(stake + additionalStake)
-		if !isFinite(stake) || stake <= 0 {
-			return 0, errors.New("martingale recovery stake could not be calculated")
-		}
-	}
-	return 0, errors.New("martingale recovery stake could not cover the recovery target")
-}
-
-func oddsAllowedForBet(quotedOdds float64) bool {
-	return isFinite(quotedOdds) && quotedOdds > validOddsFloor
-}
-
 func minimumOddsForBet() float64 {
 	return validOddsFloor
-}
-
-func roundUpMoney(value float64) float64 {
-	if !isFinite(value) || value <= 0 {
-		return 0
-	}
-	return math.Ceil((value-1e-9)*100) / 100
 }
 
 func derefFloat(value *float64) float64 {
@@ -1511,13 +1384,6 @@ func derefFloat(value *float64) float64 {
 		return 0
 	}
 	return *value
-}
-
-func nullableFloat(value sql.NullFloat64) float64 {
-	if !value.Valid {
-		return 0
-	}
-	return value.Float64
 }
 
 func nullableTimestamp(value time.Time) any {
