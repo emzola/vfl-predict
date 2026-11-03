@@ -32,15 +32,13 @@ eligible round. The dashboard's Future Rounds endpoint also excludes rounds
 whose kickoff has passed and rounds that already have a complete official run,
 so old provisional revisions cannot remain visible indefinitely.
 
-The separate Node auto-betting worker places one Odd/even bet for the
-#1-ranked frozen prediction in each round, repeating even, odd, even, odd, odd,
-even.
-It waits for each bet to settle,
-then sizes the next wager to cover outstanding losses, missed profits, and the
-current base-profit target. It accepts any valid active quote above 1.00 and
-settles the ledger from the final score parity. A season change does not reset
-the recovery cycle; turning auto betting off ends it and re-enabling auto betting
-starts fresh from the base stake and the first even outcome.
+The separate Node auto-betting worker places a flat-stake 1X2 bet for every
+frozen match in the next eligible round whose normalized observed home or away
+market probability is strictly above 50%. Draws and matches without a
+qualifying observed market are skipped. It accepts any valid active quote above
+1.00, can place multiple independent bets from one round, and settles each
+ledger row from the final home/away result. Prior settlements do not affect the
+next stake.
 
 For one-off or controlled operations, `-freeze` remains available and forces
 the requested run to use the official frozen status. `-auto-freeze` is intended
