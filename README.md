@@ -151,7 +151,7 @@ point-in-time bookmaker markets. Auto-betting examines every frozen match in
 the next eligible round and selects the single match whose normalized observed
 1X2 home or away market probability is highest and strictly above 60%. It then
 places one Odd/even bet for that round using the repeating outcome cycle even,
-odd, even, odd, odd, even. Use `-model bookmaker_first` to explicitly make
+odd, odd, even. Use `-model bookmaker_first` to explicitly make
 bookmaker probabilities the primary 1X2 prediction, or `-model poisson` to run
 the statistical fallback policy directly; auto-betting requires the observed
 bookmaker 1X2 probability gate. Every wager uses the configured base stake

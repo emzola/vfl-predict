@@ -35,7 +35,7 @@ so old provisional revisions cannot remain visible indefinitely.
 The separate Node auto-betting worker selects the single frozen match in the
 next eligible round with the highest normalized observed 1X2 home or away
 market probability strictly above 60%, then places one Odd/even bet. Outcomes
-repeat even, odd, even, odd, odd, even. Every wager uses the configured base
+repeat even, odd, odd, even. Every wager uses the configured base
 stake with flat staking. It waits for settlement before the next decision,
 accepts any valid active quote above 1.00, and settles the ledger from the
 final score parity. A season change does not reset the outcome cycle; turning

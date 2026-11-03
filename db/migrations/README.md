@@ -91,5 +91,8 @@ ledger rows.
 
 `023_phase7_odd_even_flat_staking.sql` restores the Odd/even market with the
 same observed 1X2 qualification and one-match-per-round selection. New bets
-use the repeating even, odd, even, odd, odd, even cycle and the configured base
-stake; historical ledger rows remain unchanged.
+use the repeating even, odd, odd, even cycle and the configured base stake;
+historical ledger rows remain unchanged.
+
+`024_phase7_odd_even_four_step_cycle.sql` initializes the current four-step
+cycle at even without changing historical ledger rows.

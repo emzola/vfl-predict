@@ -108,7 +108,7 @@ export default function AutoBettingPage() {
       <PageHeading
         eyebrow="Auto betting"
         title="Automated staking"
-        description="Auto betting selects the single frozen match with the highest observed normalized 1X2 home or away market probability above 60% and places one Odd/even bet. Outcomes repeat even, odd, even, odd, odd, even, using flat staking at the configured base stake."
+        description="Auto betting selects the single frozen match with the highest observed normalized 1X2 home or away market probability above 60% and places one Odd/even bet. Outcomes repeat even, odd, odd, even, using flat staking at the configured base stake."
         action={<StatusPill status={data.runtime.state || (data.settings.enabled ? "idle" : "disabled")} />}
       />
       {error && <div className="mb-5"><ErrorState message={error} /></div>}
@@ -128,7 +128,7 @@ export default function AutoBettingPage() {
               <input type="checkbox" checked={enabled} onChange={(event) => setEnabled(event.target.checked)} className="mt-1 h-4 w-4 rounded border-slate-700 bg-slate-950 text-accent" />
               <span>
                 <span className="block font-medium text-white">Enable auto betting</span>
-                <span className="mt-1 block text-sm leading-6 text-slate-400">The worker places exactly one Odd/even bet on the highest observed normalized 1X2 home or away market probability above 60% in each round. Outcomes repeat even, odd, even, odd, odd, even. It waits for settlement before the next decision; turning auto betting off ends the cycle, and re-enabling it starts fresh with even.</span>
+                <span className="mt-1 block text-sm leading-6 text-slate-400">The worker places exactly one Odd/even bet on the highest observed normalized 1X2 home or away market probability above 60% in each round. Outcomes repeat even, odd, odd, even. It waits for settlement before the next decision; turning auto betting off ends the cycle, and re-enabling it starts fresh with even.</span>
               </span>
             </label>
 
@@ -160,7 +160,7 @@ export default function AutoBettingPage() {
             <div className="grid gap-3 sm:grid-cols-2">
               <div className="rounded-xl border border-slate-800 bg-slate-950/20 p-4 text-sm">
                 <p className="text-slate-500">Fixed market</p>
-                <p className="mt-1 font-semibold text-white">Odd/even — even, odd, even, odd, odd, even</p>
+                <p className="mt-1 font-semibold text-white">Odd/even — even, odd, odd, even</p>
               </div>
               <div className="rounded-xl border border-slate-800 bg-slate-950/20 p-4 text-sm">
                 <p className="text-slate-500">Odds requirement</p>
