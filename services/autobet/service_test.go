@@ -6,69 +6,69 @@ import (
 	"testing"
 )
 
-func TestRankPredictionsPrefersPositiveOver25MarketDifference(t *testing.T) {
+func TestRankPredictionsSelectsHighestObservedOneXTwoProbability(t *testing.T) {
 	items := []predictionRow{
 		{
-			MatchID: 1,
-			Probability: probability{
-				Home: 0.60, Draw: 0.20, Away: 0.20,
-			},
-			Secondary: &secondaryGoalPayload{Over25: 0.70},
-			BookmakerGoalMarket: &bookmakerGoalMarketPayload{
-				Implied:             goalMarketProbability{Over25: 0.60},
-				PointInTimeVerified: true,
-			},
+			MatchID:             1,
+			PointInTimeVerified: true,
+			Bookmaker: &bookmakerPayload{Implied: probability{
+				Home: 0.61, Draw: 0.20, Away: 0.19,
+			}},
 		},
 		{
-			MatchID: 2,
-			Probability: probability{
-				Home: 0.30, Draw: 0.20, Away: 0.50,
-			},
-			Secondary: &secondaryGoalPayload{Over25: 0.75},
-			BookmakerGoalMarket: &bookmakerGoalMarketPayload{
-				Implied:             goalMarketProbability{Over25: 0.55},
-				PointInTimeVerified: true,
-			},
+			MatchID:             2,
+			PointInTimeVerified: true,
+			Bookmaker: &bookmakerPayload{Implied: probability{
+				Home: 0.16, Draw: 0.20, Away: 0.64,
+			}},
+		},
+		{
+			MatchID:             3,
+			PointInTimeVerified: true,
+			Bookmaker: &bookmakerPayload{Implied: probability{
+				Home: 0.60, Draw: 0.20, Away: 0.20,
+			}},
+		},
+		{
+			MatchID:             4,
+			PointInTimeVerified: false,
+			Bookmaker: &bookmakerPayload{Implied: probability{
+				Home: 0.90, Draw: 0.05, Away: 0.05,
+			}},
 		},
 	}
 
 	ranked := rankPredictions(items)
 	if len(ranked) != 2 {
-		t.Fatalf("ranked count=%d want 2", len(ranked))
+		t.Fatalf("ranked count=%d want 2 qualifying matches", len(ranked))
 	}
 	if ranked[0].MatchID != 2 {
 		t.Fatalf("top match=%d want 2", ranked[0].MatchID)
 	}
-	if ranked[0].DecisionBasis != "goal_market_difference" || ranked[0].DecisionOutcome != "over_2_5" {
+	if ranked[0].DecisionBasis != selectionRule || ranked[0].DecisionOutcome != "away" {
 		t.Fatalf("top decision=%+v", ranked[0])
 	}
-	if ranked[0].DecisionMarketDifference == nil || math.Abs(*ranked[0].DecisionMarketDifference-0.20) > 1e-9 {
-		t.Fatalf("top market difference=%v want 0.20", ranked[0].DecisionMarketDifference)
-	}
-	if math.Abs(ranked[0].DecisionProbability-0.75) > 1e-9 {
-		t.Fatalf("top decision probability=%v want 0.75", ranked[0].DecisionProbability)
+	if math.Abs(ranked[0].MarketProbability-0.64) > 1e-9 || math.Abs(ranked[0].DecisionProbability-0.64) > 1e-9 {
+		t.Fatalf("top market probability=%v want 0.64", ranked[0].MarketProbability)
 	}
 }
 
-func TestRankPredictionsFallsBackToModelProbability(t *testing.T) {
+func TestRankPredictionsDoesNotUseModelProbability(t *testing.T) {
 	items := []predictionRow{
 		{MatchID: 1, Probability: probability{Home: 0.58, Draw: 0.22, Away: 0.20}},
 		{MatchID: 2, Probability: probability{Home: 0.64, Draw: 0.19, Away: 0.17}},
 	}
 
 	ranked := rankPredictions(items)
-	if ranked[0].MatchID != 2 {
-		t.Fatalf("top match=%d want 2", ranked[0].MatchID)
-	}
-	if ranked[0].DecisionBasis != "model_probability" || ranked[0].DecisionOutcome != "home" {
-		t.Fatalf("fallback decision=%+v", ranked[0])
+	if len(ranked) != 0 {
+		t.Fatalf("model-only predictions were incorrectly selected: %+v", ranked)
 	}
 }
 
 func TestTopRankedPredictionKeepsOnlyRankOne(t *testing.T) {
 	items := []predictionRow{
-		{MatchID: 1, Probability: probability{Home: 0.60, Draw: 0.20, Away: 0.20}},
-		{MatchID: 2, Probability: probability{Home: 0.64, Draw: 0.19, Away: 0.17}},
+		{MatchID: 1, PointInTimeVerified: true, Bookmaker: &bookmakerPayload{Implied: probability{Home: 0.61, Draw: 0.20, Away: 0.19}}},
+		{MatchID: 2, PointInTimeVerified: true, Bookmaker: &bookmakerPayload{Implied: probability{Home: 0.64, Draw: 0.19, Away: 0.17}}},
 	}
 
 	top := topRankedPrediction(rankPredictions(items))
@@ -84,18 +84,18 @@ func TestApplyPredictionPayloadRecomputesMarketDifferenceFromImplied(t *testing.
 	item := predictionRow{
 		MatchID: 1,
 		Probability: probability{
-			Home: 0.463,
-			Draw: 0.246,
-			Away: 0.292,
+			Home: 0.663,
+			Draw: 0.160,
+			Away: 0.177,
 		},
 		PointInTimeVerified: true,
 	}
 	payload, err := json.Marshal(predictionPayload{
 		Bookmaker: &bookmakerPayload{
 			Implied: probability{
-				Home: 0.423,
-				Draw: 0.300,
-				Away: 0.277,
+				Home: 0.623,
+				Draw: 0.200,
+				Away: 0.177,
 			},
 			// Simulate stale or missing stored deltas; backend should
 			// recompute these from implied probabilities.
@@ -119,19 +119,19 @@ func TestApplyPredictionPayloadRecomputesMarketDifferenceFromImplied(t *testing.
 	if got := item.Bookmaker.ModelDifference.Home; math.Abs(got-0.04) > 1e-9 {
 		t.Fatalf("home model difference=%v want 0.04", got)
 	}
-	if got := item.Bookmaker.ModelDifference.Away; math.Abs(got-0.015) > 1e-9 {
-		t.Fatalf("away model difference=%v want 0.015", got)
+	if got := item.Bookmaker.ModelDifference.Away; math.Abs(got-0) > 1e-9 {
+		t.Fatalf("away model difference=%v want 0", got)
 	}
 
 	ranked := rankPredictions([]predictionRow{item})
-	if ranked[0].DecisionBasis != "goal_market_difference" {
-		t.Fatalf("decision basis=%s want goal_market_difference", ranked[0].DecisionBasis)
+	if len(ranked) != 1 || ranked[0].DecisionBasis != selectionRule {
+		t.Fatalf("decision basis=%s want %s", ranked[0].DecisionBasis, selectionRule)
 	}
-	if ranked[0].DecisionOutcome != "over_2_5" {
-		t.Fatalf("decision outcome=%s want over_2_5", ranked[0].DecisionOutcome)
+	if ranked[0].DecisionOutcome != "home" {
+		t.Fatalf("decision outcome=%s want home", ranked[0].DecisionOutcome)
 	}
-	if ranked[0].DecisionMarketDifference == nil || math.Abs(*ranked[0].DecisionMarketDifference-0.07) > 1e-9 {
-		t.Fatalf("decision market difference=%v want 0.07", ranked[0].DecisionMarketDifference)
+	if math.Abs(ranked[0].MarketProbability-0.623) > 1e-9 {
+		t.Fatalf("market probability=%v want 0.623", ranked[0].MarketProbability)
 	}
 }
 
@@ -162,49 +162,27 @@ func TestRoundMoneyRoundsToTwoDecimals(t *testing.T) {
 	}
 }
 
-func TestOddEvenSettlementDecisionUsesFinalParity(t *testing.T) {
-	status, score, settled := oddEvenSettlementDecision("unknown", true, &matchScore{Home: 2, Away: 0}, nil, &matchScore{Home: 2, Away: 0})
-	if !settled || status != "won" || score == nil || score.Home != 2 || score.Away != 0 {
-		t.Fatalf("final even decision=(%s, %+v, %v)", status, score, settled)
+func TestOver15SettlementDecisionUsesFinalScore(t *testing.T) {
+	status, score, settled := over15SettlementDecision("unknown", true, &matchScore{Home: 1, Away: 0}, nil, &matchScore{Home: 1, Away: 1})
+	if !settled || status != "won" || score == nil || score.Home != 1 || score.Away != 1 {
+		t.Fatalf("final Over 1.5 decision=(%s, %+v, %v)", status, score, settled)
 	}
 
-	status, score, settled = oddEvenSettlementDecision("unknown", true, &matchScore{Home: 1, Away: 0}, nil, &matchScore{Home: 1, Away: 0})
+	status, score, settled = over15SettlementDecision("unknown", true, &matchScore{Home: 0, Away: 0}, nil, &matchScore{Home: 1, Away: 0})
 	if !settled || status != "lost" || score == nil || score.Home != 1 || score.Away != 0 {
-		t.Fatalf("final odd decision=(%s, %+v, %v)", status, score, settled)
+		t.Fatalf("final Under 1.5 decision=(%s, %+v, %v)", status, score, settled)
 	}
 }
 
-func TestOddEvenBetCycleRepeatsConfiguredPattern(t *testing.T) {
-	want := []string{"even", "odd", "even", "odd", "odd", "even", "even", "odd", "even", "odd", "odd", "even"}
-	for index, expected := range want {
-		outcome := oddEvenBetCycle[index%len(oddEvenBetCycle)]
-		if outcome.Name != expected {
-			t.Fatalf("cycle position %d=%s want %s", index, outcome.Name, expected)
-		}
-	}
-}
-
-func TestOddEvenSettlementDecisionUsesRequestedOutcome(t *testing.T) {
-	status, score, settled := oddEvenSettlementDecisionFor("completed", false, &matchScore{Home: 2, Away: 0}, nil, nil, "odd")
-	if !settled || status != "lost" || score == nil {
-		t.Fatalf("odd decision on even score=(%s, %+v, %v)", status, score, settled)
-	}
-
-	status, score, settled = oddEvenSettlementDecisionFor("completed", false, &matchScore{Home: 1, Away: 0}, nil, nil, "odd")
-	if !settled || status != "won" || score == nil {
-		t.Fatalf("odd decision on odd score=(%s, %+v, %v)", status, score, settled)
-	}
-}
-
-func TestOddEvenSettlementDecisionWaitsForFinalScore(t *testing.T) {
-	status, score, settled := oddEvenSettlementDecision("unknown", true, &matchScore{Home: 1, Away: 0}, &matchScore{Home: 1, Away: 0}, nil)
+func TestOver15SettlementDecisionWaitsForFinalScore(t *testing.T) {
+	status, score, settled := over15SettlementDecision("unknown", true, &matchScore{Home: 1, Away: 0}, &matchScore{Home: 1, Away: 0}, nil)
 	if settled || status != "" || score != nil {
-		t.Fatalf("unfinished parity decision=(%s, %+v, %v)", status, score, settled)
+		t.Fatalf("unfinished Over 1.5 decision=(%s, %+v, %v)", status, score, settled)
 	}
 
-	status, score, settled = oddEvenSettlementDecision("completed", false, &matchScore{Home: 1, Away: 0}, nil, nil)
+	status, score, settled = over15SettlementDecision("completed", false, &matchScore{Home: 1, Away: 0}, nil, nil)
 	if !settled || status != "lost" || score == nil {
-		t.Fatalf("completed odd decision=(%s, %+v, %v)", status, score, settled)
+		t.Fatalf("completed Under 1.5 decision=(%s, %+v, %v)", status, score, settled)
 	}
 }
 

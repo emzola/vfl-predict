@@ -15,6 +15,7 @@ const candidate = {
   away_team: "VL Prague",
   scheduled_at: "2026-10-30T01:00:00.000Z",
   stake_amount: 50,
+  bet_outcome: "over_1_5",
 };
 
 const selection = {
@@ -26,42 +27,42 @@ const selection = {
   away_team_uid: 276515,
   away_team_provider_id: "sr:competitor:276515",
   away_team_abbreviation: "PRA",
-  market_id: 26,
-  market_name: "Odd/even",
-  specifiers: "",
-  outcome_id: "72",
+  market_id: 18,
+  market_name: "Total Goals",
+  specifiers: "total=1.5",
+  outcome_id: "12",
   decimal_odds: 1.4,
   raw_odds: "1.40",
-  outcome_name: "even",
+  outcome_name: "over 1.5",
 };
 
-test("buildBetPayload converts the odd/even ticket units and metadata", () => {
+test("buildBetPayload converts the Over 1.5 ticket units and metadata", () => {
   const payload = buildBetPayload(candidate, selection, { sessionID: "session-1" });
   assert.equal(payload.length, 1);
   assert.equal(payload[0].sender.bookmakerId, 9478);
   assert.equal(payload[0].sender.endCustomer.id, "session-1");
   assert.equal(payload[0].selections[0].eventId, "vf:match:1412492414");
-  assert.equal(payload[0].selections[0].id, "uof:6/sr:sport:1/26/72");
+  assert.equal(payload[0].selections[0].id, "uof:6/sr:sport:1/18/12?total=1.5");
   assert.equal(payload[0].selections[0].odds, 14000);
   assert.equal(payload[0].selections[0].convertedOdds, "1.40");
-  assert.equal(payload[0].selections[0].metaData.marketName, "Odd/even");
-  assert.equal(payload[0].selections[0].metaData.outcomeName, "even");
+  assert.equal(payload[0].selections[0].metaData.marketName, "Total Goals");
+  assert.equal(payload[0].selections[0].metaData.outcomeName, "over 1.5");
   assert.equal(payload[0].bets[0].stake.value, "500000");
   assert.equal(payload[0].selections[0].metaData.tournament.name, "Season 2026");
   assert.equal(payload[0].selections[0].metaData.tournament.event.competitors[0].id, "sr:competitor:276504");
 });
 
-test("buildBetPayload supports the odd outcome", () => {
+test("buildBetPayload supports explicit Over 1.5 configuration", () => {
   const payload = buildBetPayload(
     candidate,
-    { ...selection, outcome_id: "70", outcome_name: "odd", decimal_odds: 1.9, raw_odds: "1.90" },
-    { sessionID: "session-1" },
+    selection,
+    { sessionID: "session-1", selectionID: "uof:6/sr:sport:1/18/12?total=1.5", marketName: "Total Goals", outcomeName: "over 1.5" },
   );
-  assert.equal(payload[0].selections[0].id, "uof:6/sr:sport:1/26/70");
-  assert.equal(payload[0].selections[0].metaData.outcomeName, "odd");
+  assert.equal(payload[0].selections[0].id, "uof:6/sr:sport:1/18/12?total=1.5");
+  assert.equal(payload[0].selections[0].metaData.outcomeName, "over 1.5");
 });
 
-test("buildBetPayload accepts valid even odds below the former 1.20 floor", () => {
+test("buildBetPayload accepts valid Over 1.5 odds below the former 1.20 floor", () => {
   const payload = buildBetPayload(
     { ...candidate, round: 1 },
     { ...selection, decimal_odds: 1.19, raw_odds: "1.19" },
@@ -82,14 +83,14 @@ test("buildBetPayload rejects odds at or below 1.00", () => {
   );
 });
 
-test("buildBetPayload rejects a non Odd/even market selection", () => {
+test("buildBetPayload rejects a non Over 1.5 market selection", () => {
   assert.throws(
     () => buildBetPayload(
       candidate,
-      { ...selection, market_id: 18, specifiers: "total=1.5", outcome_id: "12", outcome_name: "over 1.5" },
+      { ...selection, market_id: 26, specifiers: "", outcome_id: "72", outcome_name: "even" },
       { sessionID: "session-1" },
     ),
-    /valid Odd\/even market outcome/,
+    /valid Over 1\.5 market outcome/,
   );
 });
 

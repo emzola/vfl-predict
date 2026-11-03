@@ -13,30 +13,16 @@ import (
 )
 
 const (
-	primaryKey      = "primary"
-	marketKey       = "odd_even"
-	runtimeState    = "disabled"
-	validOddsFloor  = 1.00
-	selectionRule   = "highest_ranked_frozen_prediction"
-	stakingStrategy = "martingale_recovery"
-	oddOutcomeID    = "70"
-	evenOutcomeID   = "72"
+	primaryKey            = "primary"
+	marketKey             = "over_1_5"
+	runtimeState          = "disabled"
+	validOddsFloor        = 1.00
+	selectionRule         = "highest_observed_1x2_market_probability_above_60"
+	stakingStrategy       = "martingale_recovery"
+	overOneFiveMarketID   = int64(18)
+	overOneFiveOutcomeID  = "12"
+	overOneFiveSpecifiers = "total=1.5"
 )
-
-type betOutcome struct {
-	ID       string
-	Name     string
-	Position int
-}
-
-var oddEvenBetCycle = [...]betOutcome{
-	{ID: evenOutcomeID, Name: "even", Position: 1},
-	{ID: oddOutcomeID, Name: "odd", Position: 2},
-	{ID: evenOutcomeID, Name: "even", Position: 3},
-	{ID: oddOutcomeID, Name: "odd", Position: 4},
-	{ID: oddOutcomeID, Name: "odd", Position: 5},
-	{ID: evenOutcomeID, Name: "even", Position: 6},
-}
 
 type Service struct {
 	DB             *sql.DB
@@ -103,23 +89,25 @@ type SeasonSummary struct {
 }
 
 type RoundRecord struct {
-	SeasonID       string     `json:"season_id"`
-	Round          int        `json:"round"`
-	MatchID        int64      `json:"match_id"`
-	Status         string     `json:"status"`
-	HomeTeam       string     `json:"home_team"`
-	AwayTeam       string     `json:"away_team"`
-	StakeAmount    float64    `json:"stake_amount"`
-	BetOutcome     string     `json:"bet_outcome,omitempty"`
-	QuotedOdds     *float64   `json:"quoted_odds,omitempty"`
-	PotentialRet   *float64   `json:"potential_return,omitempty"`
-	RealizedRet    *float64   `json:"realized_return,omitempty"`
-	RealizedProfit *float64   `json:"realized_profit,omitempty"`
-	SkipReason     string     `json:"skip_reason,omitempty"`
-	BetReference   string     `json:"bet_reference,omitempty"`
-	PlacedAt       *time.Time `json:"placed_at,omitempty"`
-	SettledAt      *time.Time `json:"settled_at,omitempty"`
-	CreatedAt      time.Time  `json:"created_at"`
+	SeasonID          string     `json:"season_id"`
+	Round             int        `json:"round"`
+	MatchID           int64      `json:"match_id"`
+	Status            string     `json:"status"`
+	HomeTeam          string     `json:"home_team"`
+	AwayTeam          string     `json:"away_team"`
+	StakeAmount       float64    `json:"stake_amount"`
+	MarketKey         string     `json:"market_key,omitempty"`
+	BetOutcome        string     `json:"bet_outcome,omitempty"`
+	MarketProbability *float64   `json:"market_probability,omitempty"`
+	QuotedOdds        *float64   `json:"quoted_odds,omitempty"`
+	PotentialRet      *float64   `json:"potential_return,omitempty"`
+	RealizedRet       *float64   `json:"realized_return,omitempty"`
+	RealizedProfit    *float64   `json:"realized_profit,omitempty"`
+	SkipReason        string     `json:"skip_reason,omitempty"`
+	BetReference      string     `json:"bet_reference,omitempty"`
+	PlacedAt          *time.Time `json:"placed_at,omitempty"`
+	SettledAt         *time.Time `json:"settled_at,omitempty"`
+	CreatedAt         time.Time  `json:"created_at"`
 }
 
 type Candidate struct {
@@ -137,6 +125,7 @@ type Candidate struct {
 	DecisionOutcome          string     `json:"decision_outcome"`
 	DecisionProbability      float64    `json:"decision_probability"`
 	DecisionMarketDifference *float64   `json:"decision_market_difference,omitempty"`
+	MarketProbability        float64    `json:"market_probability"`
 	PointInTimeVerified      bool       `json:"point_in_time_verified"`
 	OddsObservedAt           *time.Time `json:"odds_observed_at,omitempty"`
 	BetOutcome               string     `json:"bet_outcome,omitempty"`
@@ -156,7 +145,7 @@ type DashboardState struct {
 	SeasonSummary  *SeasonSummary `json:"season_summary,omitempty"`
 	NextCandidates []Candidate    `json:"next_candidates,omitempty"`
 	// NextCandidate remains populated for older dashboard clients. NextCandidates
-	// contains at most the single top-ranked prediction for the next round.
+	// contains the single top-ranked qualifying prediction for the next round.
 	NextCandidate *Candidate    `json:"next_candidate,omitempty"`
 	RecentRounds  []RoundRecord `json:"recent_rounds"`
 }
@@ -171,15 +160,15 @@ type WorkerTask struct {
 	// Prepared remains in the response for older clients that understand the
 	// preview shape; the active strategy does not populate or use it.
 	Prepared *BetTask `json:"prepared,omitempty"`
-	// Bets contains at most one entry: the highest-ranked frozen prediction for
-	// the selected round. Candidate and Selection remain rollout-compatible
+	// Bets contains at most one entry: the highest-ranked qualifying prediction
+	// for the selected round. Candidate and Selection remain rollout-compatible
 	// aliases for that entry.
 	Candidate *Candidate    `json:"candidate,omitempty"`
 	Selection *BetSelection `json:"selection,omitempty"`
 }
 
 // BetSelection contains the latest executable provider quote for the selected
-// Odd/even outcome. It is returned only on the internal worker task response;
+// Over 1.5 outcome. It is returned only on the internal worker task response;
 // dashboard responses use DashboardState and therefore never expose it.
 type BetSelection struct {
 	MatchID              int64     `json:"match_id"`
@@ -309,6 +298,7 @@ type rankedPrediction struct {
 	DecisionOutcome          string
 	DecisionProbability      float64
 	DecisionMarketDifference *float64
+	MarketProbability        float64
 	originalIndex            int
 }
 
@@ -393,13 +383,7 @@ func (s *Service) LoadDashboard(ctx context.Context) (DashboardState, error) {
 		}
 		state.NextCandidates = candidates
 		if len(state.NextCandidates) > 0 {
-			outcome, outcomeErr := s.nextBetOutcome(ctx, settings.RecoveryResetAt)
-			if outcomeErr != nil {
-				return DashboardState{}, outcomeErr
-			}
-			state.NextCandidates[0].BetOutcome = outcome.Name
-			state.NextCandidates[0].BetOutcomeID = outcome.ID
-			selection, selectionErr := s.loadBetSelection(ctx, state.NextCandidates[0].MatchID, outcome.ID)
+			selection, selectionErr := s.loadBetSelection(ctx, state.NextCandidates[0].MatchID)
 			if selectionErr != nil {
 				return DashboardState{}, selectionErr
 			}
@@ -570,17 +554,11 @@ func (s *Service) NextTask(ctx context.Context) (*WorkerTask, error) {
 		return task, nil
 	}
 	candidate := candidates[0]
-	outcome, outcomeErr := s.nextBetOutcome(ctx, settings.RecoveryResetAt)
-	if outcomeErr != nil {
-		return nil, outcomeErr
-	}
-	selection, selectionErr := s.loadBetSelection(ctx, candidate.MatchID, outcome.ID)
+	selection, selectionErr := s.loadBetSelection(ctx, candidate.MatchID)
 	if selectionErr != nil {
 		return nil, selectionErr
 	}
 	candidateCopy := candidate
-	candidateCopy.BetOutcome = outcome.Name
-	candidateCopy.BetOutcomeID = outcome.ID
 	if selection != nil && oddsAllowedForBet(selection.DecimalOdds) {
 		stake, stakeErr := determineMartingaleStake(settings.BaseStake, summary.UnrecoveredLoss, summary.MissedProfit, selection.DecimalOdds)
 		if stakeErr != nil {
@@ -607,13 +585,7 @@ func (s *Service) prepareNextBet(ctx context.Context, seasonID string, settings 
 		return nil, err
 	}
 	candidateCopy := candidates[0]
-	outcome, err := s.nextBetOutcome(ctx, settings.RecoveryResetAt)
-	if err != nil {
-		return nil, err
-	}
-	candidateCopy.BetOutcome = outcome.Name
-	candidateCopy.BetOutcomeID = outcome.ID
-	selection, err := s.loadBetSelection(ctx, candidateCopy.MatchID, outcome.ID)
+	selection, err := s.loadBetSelection(ctx, candidateCopy.MatchID)
 	if err != nil {
 		return nil, err
 	}
@@ -626,12 +598,9 @@ func (s *Service) prepareNextBet(ctx context.Context, seasonID string, settings 
 	return &BetTask{Candidate: &candidateCopy, Selection: selection}, nil
 }
 
-func (s *Service) loadBetSelection(ctx context.Context, matchID int64, outcomeID string) (*BetSelection, error) {
+func (s *Service) loadBetSelection(ctx context.Context, matchID int64) (*BetSelection, error) {
 	if matchID <= 0 {
 		return nil, errors.New("invalid betting match id")
-	}
-	if outcomeID != oddOutcomeID && outcomeID != evenOutcomeID {
-		return nil, errors.New("invalid Odd/even outcome")
 	}
 	var selection BetSelection
 	err := s.DB.QueryRowContext(ctx, `
@@ -649,16 +618,16 @@ JOIN teams at ON at.team_uid = f.away_team_uid
 JOIN odds_snapshots o ON o.match_id = f.match_id
 JOIN market_definitions md ON md.market_definition_id = o.market_definition_id
 WHERE f.match_id = $1
-  AND o.provider_market_id = 26
-  AND o.specifiers = ''
-  AND o.outcome_id = $2
+  AND o.provider_market_id = $2
+  AND o.specifiers = $3
+  AND o.outcome_id = $4
   AND o.odds_valid = true
   AND o.decimal_odds IS NOT NULL
   AND o.market_status = 1
   AND o.outcome_active = 1
   AND o.observation_kind = 'live_observation'
 ORDER BY o.last_observed_at DESC, o.source_timestamp_at DESC, o.odds_snapshot_id DESC
-LIMIT 1`, matchID, outcomeID).Scan(
+LIMIT 1`, matchID, overOneFiveMarketID, overOneFiveSpecifiers, overOneFiveOutcomeID).Scan(
 		&selection.MatchID,
 		&selection.SeasonYear,
 		&selection.HomeTeamUID, &selection.HomeTeamProviderID, &selection.HomeTeamAbbreviation,
@@ -676,25 +645,6 @@ LIMIT 1`, matchID, outcomeID).Scan(
 	selection.SourceTimestampAt = selection.SourceTimestampAt.UTC()
 	selection.ObservedAt = selection.ObservedAt.UTC()
 	return &selection, nil
-}
-
-func (s *Service) nextBetOutcome(ctx context.Context, resetAt time.Time) (betOutcome, error) {
-	if resetAt.IsZero() {
-		resetAt = time.Unix(0, 0).UTC()
-	}
-	var placedCount int64
-	err := s.DB.QueryRowContext(ctx, `
-SELECT count(*)
-FROM auto_betting_rounds
-WHERE created_at >= $1
-  AND market_key = $2
-  AND status IN ('placed', 'won', 'lost', 'void')
-  AND decision_payload ? 'bet_outcome'`, resetAt, marketKey).Scan(&placedCount)
-	if err != nil {
-		return betOutcome{}, err
-	}
-	position := int(placedCount % int64(len(oddEvenBetCycle)))
-	return oddEvenBetCycle[position], nil
 }
 
 func (s *Service) UpdateRuntime(ctx context.Context, update RuntimeUpdate) error {
@@ -740,12 +690,15 @@ func (s *Service) RecordSkip(ctx context.Context, seasonID string, round int, ma
 		return err
 	}
 	payload := map[string]any{
-		"decision_basis":         candidate.DecisionBasis,
-		"decision_outcome":       candidate.DecisionOutcome,
-		"decision_probability":   candidate.DecisionProbability,
-		"point_in_time_verified": candidate.PointInTimeVerified,
-		"selection_rule":         selectionRule,
-		"staking_strategy":       stakingStrategy,
+		"decision_basis":              candidate.DecisionBasis,
+		"decision_outcome":            candidate.DecisionOutcome,
+		"decision_probability":        candidate.DecisionProbability,
+		"observed_market_probability": candidate.MarketProbability,
+		"point_in_time_verified":      candidate.PointInTimeVerified,
+		"selection_rule":              selectionRule,
+		"staking_strategy":            stakingStrategy,
+		"bet_outcome":                 candidate.BetOutcome,
+		"bet_outcome_id":              candidate.BetOutcomeID,
 	}
 	if candidate.DecisionMarketDifference != nil {
 		payload["decision_market_difference"] = *candidate.DecisionMarketDifference
@@ -775,10 +728,6 @@ func (s *Service) RecordPlaced(ctx context.Context, seasonID string, round int, 
 	if !isFinite(quotedOdds) || quotedOdds <= validOddsFloor {
 		return errors.New("quoted odds must be greater than 1.00")
 	}
-	outcome, outcomeErr := s.nextBetOutcome(ctx, settings.RecoveryResetAt)
-	if outcomeErr != nil {
-		return outcomeErr
-	}
 	stake, stakeErr := determineMartingaleStake(settings.BaseStake, summary.UnrecoveredLoss, summary.MissedProfit, quotedOdds)
 	if stakeErr != nil {
 		return stakeErr
@@ -787,6 +736,7 @@ func (s *Service) RecordPlaced(ctx context.Context, seasonID string, round int, 
 		"decision_basis":                 candidate.DecisionBasis,
 		"decision_outcome":               candidate.DecisionOutcome,
 		"decision_probability":           candidate.DecisionProbability,
+		"observed_market_probability":    candidate.MarketProbability,
 		"point_in_time_verified":         candidate.PointInTimeVerified,
 		"selection_rule":                 selectionRule,
 		"staking_strategy":               stakingStrategy,
@@ -797,9 +747,8 @@ func (s *Service) RecordPlaced(ctx context.Context, seasonID string, round int, 
 		"recovery_obligation_before_bet": summary.RecoveryObligation,
 		"current_intended_profit":        roundMoney(settings.BaseStake * (quotedOdds - 1)),
 		"placed_stake":                   stake,
-		"bet_outcome":                    outcome.Name,
-		"bet_outcome_id":                 outcome.ID,
-		"bet_cycle_position":             outcome.Position,
+		"bet_outcome":                    candidate.BetOutcome,
+		"bet_outcome_id":                 candidate.BetOutcomeID,
 	}
 	if candidate.DecisionMarketDifference != nil {
 		payload["decision_market_difference"] = *candidate.DecisionMarketDifference
@@ -826,7 +775,7 @@ func (s *Service) Settle(ctx context.Context) (SettlementReport, error) {
 	}
 	rows, err := s.DB.QueryContext(ctx, `
 SELECT r.auto_betting_round_id::text, r.season_id, r.round_no, r.stake_amount, r.quoted_odds,
-       COALESCE(r.decision_payload->>'bet_outcome', 'even'),
+       r.market_key, COALESCE(r.decision_payload->>'bet_outcome', ''),
        f.status, f.result_home, f.result_away,
        f.half_time_home, f.half_time_away, f.full_time_home, f.full_time_away,
        f.in_live_score
@@ -840,12 +789,12 @@ ORDER BY r.season_id, r.round_no`)
 	defer rows.Close()
 	report := SettlementReport{}
 	for rows.Next() {
-		var id, seasonID, fixtureStatus, betOutcome string
+		var id, seasonID, roundMarket, fixtureStatus, betOutcome string
 		var round int
 		var stake, odds float64
 		var homeScore, awayScore, halfTimeHome, halfTimeAway, fullTimeHome, fullTimeAway sql.NullInt64
 		var inLiveScore bool
-		if err := rows.Scan(&id, &seasonID, &round, &stake, &odds, &betOutcome, &fixtureStatus, &homeScore, &awayScore,
+		if err := rows.Scan(&id, &seasonID, &round, &stake, &odds, &roundMarket, &betOutcome, &fixtureStatus, &homeScore, &awayScore,
 			&halfTimeHome, &halfTimeAway, &fullTimeHome, &fullTimeAway, &inLiveScore); err != nil {
 			return report, err
 		}
@@ -857,14 +806,27 @@ ORDER BY r.season_id, r.round_no`)
 			report.VoidCount++
 			continue
 		}
-		outcome, score, settled := oddEvenSettlementDecisionFor(
-			fixtureStatus,
-			inLiveScore,
-			nullableMatchScore(homeScore, awayScore),
-			nullableMatchScore(halfTimeHome, halfTimeAway),
-			nullableMatchScore(fullTimeHome, fullTimeAway),
-			betOutcome,
-		)
+		var outcome string
+		var score *matchScore
+		var settled bool
+		if strings.EqualFold(roundMarket, "odd_even") {
+			outcome, score, settled = oddEvenSettlementDecisionFor(
+				fixtureStatus,
+				inLiveScore,
+				nullableMatchScore(homeScore, awayScore),
+				nullableMatchScore(halfTimeHome, halfTimeAway),
+				nullableMatchScore(fullTimeHome, fullTimeAway),
+				betOutcome,
+			)
+		} else {
+			outcome, score, settled = over15SettlementDecision(
+				fixtureStatus,
+				inLiveScore,
+				nullableMatchScore(homeScore, awayScore),
+				nullableMatchScore(halfTimeHome, halfTimeAway),
+				nullableMatchScore(fullTimeHome, fullTimeAway),
+			)
+		}
 		if !settled || score == nil {
 			continue
 		}
@@ -925,8 +887,22 @@ func nullableMatchScore(home, away sql.NullInt64) *matchScore {
 	return &matchScore{Home: int(home.Int64), Away: int(away.Int64)}
 }
 
-func oddEvenSettlementDecision(fixtureStatus string, inLiveScore bool, current, halftime, fulltime *matchScore) (string, *matchScore, bool) {
-	return oddEvenSettlementDecisionFor(fixtureStatus, inLiveScore, current, halftime, fulltime, "even")
+func over15SettlementDecision(fixtureStatus string, inLiveScore bool, current, halftime, fulltime *matchScore) (string, *matchScore, bool) {
+	if fulltime != nil {
+		if fulltime.Home+fulltime.Away > 1 {
+			return "won", fulltime, true
+		}
+		return "lost", fulltime, true
+	}
+	for _, score := range []*matchScore{current, halftime} {
+		if score != nil && score.Home+score.Away > 1 {
+			return "won", score, true
+		}
+	}
+	if inLiveScore || !strings.EqualFold(fixtureStatus, "completed") || current == nil {
+		return "", nil, false
+	}
+	return "lost", current, true
 }
 
 func oddEvenSettlementDecisionFor(fixtureStatus string, inLiveScore bool, current, halftime, fulltime *matchScore, betOutcome string) (string, *matchScore, bool) {
@@ -985,7 +961,7 @@ SELECT EXISTS (
 			return settings, summary, &candidates[index], nil
 		}
 	}
-	return Settings{}, SeasonSummary{}, nil, errors.New("the highest-ranked frozen betting candidate is not available for this match")
+	return Settings{}, SeasonSummary{}, nil, errors.New("the highest qualifying observed 1X2 market probability candidate is not available for this match")
 }
 
 func (s *Service) nextCandidates(ctx context.Context, seasonID string, settings Settings, summary SeasonSummary) ([]Candidate, error) {
@@ -1060,8 +1036,8 @@ ORDER BY p.season_id, p.round_no, pr.match_id,
 	if len(predictions) == 0 {
 		return []Candidate{}, nil
 	}
-	// Auto betting uses exactly one fixture per frozen round: the first item
-	// is the same rank-one decision shown by the Predictions dashboard.
+	// Auto betting uses exactly one qualifying fixture per frozen round: the
+	// highest observed home/away 1X2 market probability above 60%.
 	ranked := topRankedPrediction(rankPredictions(predictions))
 	result := make([]Candidate, 0, len(ranked))
 	for _, item := range ranked {
@@ -1080,8 +1056,11 @@ ORDER BY p.season_id, p.round_no, pr.match_id,
 			DecisionOutcome:          item.DecisionOutcome,
 			DecisionProbability:      item.DecisionProbability,
 			DecisionMarketDifference: item.DecisionMarketDifference,
+			MarketProbability:        item.MarketProbability,
 			PointInTimeVerified:      item.PointInTimeVerified,
 			OddsObservedAt:           item.OddsObservedAt,
+			BetOutcome:               "over_1_5",
+			BetOutcomeID:             overOneFiveOutcomeID,
 			StakeAmount:              stake,
 		})
 	}
@@ -1123,25 +1102,22 @@ ORDER BY p.round_no`, seasonID, s.now())
 func rankPredictions(items []predictionRow) []rankedPrediction {
 	ranked := make([]rankedPrediction, 0, len(items))
 	for index, item := range items {
-		outcome, diff, basis := decisionSignal(item)
-		probability := outcomeProbability(item.Probability, item.Secondary, outcome)
+		outcome, marketProbability, ok := observedOneXTwoQualifier(item)
+		if !ok {
+			continue
+		}
 		ranked = append(ranked, rankedPrediction{
-			predictionRow:            item,
-			DecisionBasis:            basis,
-			DecisionOutcome:          outcome,
-			DecisionProbability:      probability,
-			DecisionMarketDifference: diff,
-			originalIndex:            index,
+			predictionRow:       item,
+			DecisionBasis:       selectionRule,
+			DecisionOutcome:     outcome,
+			DecisionProbability: marketProbability,
+			MarketProbability:   marketProbability,
+			originalIndex:       index,
 		})
 	}
 	sort.Slice(ranked, func(i, j int) bool {
-		leftMarket := marketSortValue(ranked[i])
-		rightMarket := marketSortValue(ranked[j])
-		if rightMarket != leftMarket {
-			return leftMarket > rightMarket
-		}
-		if ranked[j].DecisionProbability != ranked[i].DecisionProbability {
-			return ranked[i].DecisionProbability > ranked[j].DecisionProbability
+		if ranked[j].MarketProbability != ranked[i].MarketProbability {
+			return ranked[i].MarketProbability > ranked[j].MarketProbability
 		}
 		if !ranked[i].ScheduledAt.Equal(ranked[j].ScheduledAt) {
 			return ranked[i].ScheduledAt.Before(ranked[j].ScheduledAt)
@@ -1161,62 +1137,26 @@ func topRankedPrediction(items []rankedPrediction) []rankedPrediction {
 	return items
 }
 
-func decisionSignal(item predictionRow) (string, *float64, string) {
-	if difference, ok := over25MarketDifference(item); ok && difference > 0 {
-		value := difference
-		return "over_2_5", &value, "goal_market_difference"
+func observedOneXTwoQualifier(item predictionRow) (string, float64, bool) {
+	if item.Bookmaker == nil || !item.PointInTimeVerified || !hasFiniteImplied(item.Bookmaker.Implied) {
+		return "", 0, false
 	}
-	if item.Secondary != nil && isFinite(item.Secondary.Over25) {
-		return "over_2_5", nil, "model_probability"
+	home := item.Bookmaker.Implied.Home
+	away := item.Bookmaker.Implied.Away
+	if !validProbability(home) || !validProbability(away) {
+		return "", 0, false
 	}
-	return mostLikelyOutcome(item.Probability), nil, "model_probability"
+	if home <= 0.60 && away <= 0.60 {
+		return "", 0, false
+	}
+	if home >= away {
+		return "home", home, true
+	}
+	return "away", away, true
 }
 
-func over25MarketDifference(item predictionRow) (float64, bool) {
-	if item.BookmakerGoalMarket == nil || !item.BookmakerGoalMarket.PointInTimeVerified || item.Secondary == nil {
-		return 0, false
-	}
-	if !isFinite(item.Secondary.Over25) || !isFinite(item.BookmakerGoalMarket.Implied.Over25) {
-		return 0, false
-	}
-	difference := item.Secondary.Over25 - item.BookmakerGoalMarket.Implied.Over25
-	if !isFinite(difference) {
-		return 0, false
-	}
-	return difference, true
-}
-
-func marketSortValue(item rankedPrediction) float64 {
-	if item.DecisionBasis == "goal_market_difference" && item.DecisionMarketDifference != nil {
-		return *item.DecisionMarketDifference
-	}
-	return -1
-}
-
-func mostLikelyOutcome(value probability) string {
-	if value.Draw >= value.Home && value.Draw >= value.Away {
-		return "draw"
-	}
-	if value.Home >= value.Away {
-		return "home"
-	}
-	return "away"
-}
-
-func outcomeProbability(value probability, secondary *secondaryGoalPayload, outcome string) float64 {
-	switch outcome {
-	case "over_2_5":
-		if secondary != nil {
-			return secondary.Over25
-		}
-		return 0
-	case "draw":
-		return value.Draw
-	case "away":
-		return value.Away
-	default:
-		return value.Home
-	}
+func validProbability(value float64) bool {
+	return isFinite(value) && value >= 0 && value <= 1
 }
 
 func (s *Service) currentSeasonID(ctx context.Context) (string, error) {
@@ -1340,7 +1280,7 @@ WHERE season_id = $1`, seasonID).Scan(&summary.TotalStaked, &summary.TotalReturn
 	summary.MissedProfit = recovery.MissedProfit
 	summary.RecoveryObligation = recovery.obligation()
 	// Recovery is intentionally loaded across season boundaries. Until a live
-	// Odd/even quote is loaded, expose the base stake as the safe fallback; NextTask
+	// Over 1.5 quote is loaded, expose the base stake as the safe fallback; NextTask
 	// and the dashboard replace it with the recovery stake when a valid quote is
 	// available.
 	summary.NextStake = determineNextStake(settings.BaseStake)
@@ -1430,7 +1370,9 @@ func applySettledResultToRecovery(recovery recoveryState, status string, stake, 
 func (s *Service) loadRecentRounds(ctx context.Context, limit int) ([]RoundRecord, error) {
 	rows, err := s.DB.QueryContext(ctx, `
 SELECT season_id, round_no, COALESCE(match_id, 0), status, home_team, away_team, stake_amount::double precision,
-       COALESCE(decision_payload->>'bet_outcome', ''), quoted_odds::double precision, potential_return::double precision,
+       market_key, COALESCE(decision_payload->>'bet_outcome', ''),
+       NULLIF(decision_payload->>'observed_market_probability', '')::double precision,
+       quoted_odds::double precision, potential_return::double precision,
        realized_return::double precision, realized_profit::double precision, COALESCE(skip_reason, ''),
        COALESCE(bet_reference, ''), placed_at, settled_at, created_at
 FROM auto_betting_rounds
@@ -1443,13 +1385,17 @@ LIMIT $1`, limit)
 	result := make([]RoundRecord, 0, limit)
 	for rows.Next() {
 		var item RoundRecord
-		var quoted, potential, realizedReturn, realizedProfit sql.NullFloat64
+		var marketProbability, quoted, potential, realizedReturn, realizedProfit sql.NullFloat64
 		var placedAt, settledAt sql.NullTime
 		if err := rows.Scan(&item.SeasonID, &item.Round, &item.MatchID, &item.Status, &item.HomeTeam, &item.AwayTeam, &item.StakeAmount,
-			&item.BetOutcome, &quoted, &potential, &realizedReturn, &realizedProfit, &item.SkipReason, &item.BetReference, &placedAt, &settledAt, &item.CreatedAt); err != nil {
+			&item.MarketKey, &item.BetOutcome, &marketProbability, &quoted, &potential, &realizedReturn, &realizedProfit, &item.SkipReason, &item.BetReference, &placedAt, &settledAt, &item.CreatedAt); err != nil {
 			return nil, err
 		}
 		item.CreatedAt = item.CreatedAt.UTC()
+		if marketProbability.Valid {
+			value := marketProbability.Float64
+			item.MarketProbability = &value
+		}
 		if quoted.Valid {
 			value := quoted.Float64
 			item.QuotedOdds = &value

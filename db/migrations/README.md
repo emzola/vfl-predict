@@ -83,3 +83,8 @@ target. Existing ledger rows remain unchanged.
 `021_phase7_cross_season_recovery.sql` adds the cutoff used by the service to
 keep recovery across season boundaries. The service refreshes that cutoff when
 auto betting is turned off or re-enabled, so re-enabling starts a fresh cycle.
+
+`022_phase7_over_1_5_market_gate.sql` switches the active market back to Over
+1.5 goals. It selects one match per round using the highest normalized observed
+1X2 home or away probability strictly above 60%, while preserving historical
+ledger rows and the existing martingale recovery policy.
