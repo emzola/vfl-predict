@@ -83,9 +83,3 @@ target. Existing ledger rows remain unchanged.
 `021_phase7_cross_season_recovery.sql` adds the cutoff used by the service to
 keep recovery across season boundaries. The service refreshes that cutoff when
 auto betting is turned off or re-enabled, so re-enabling starts a fresh cycle.
-
-`022_phase7_observed_1x2_flat_betting.sql` switches the active auto-betting
-market to normalized observed 1X2 probabilities. New rows qualify only when
-home or away is above 50%, use the flat configured stake, and may contain
-multiple independent matches from one round. Older Odd/even and recovery rows
-remain unchanged for audit and settlement compatibility.

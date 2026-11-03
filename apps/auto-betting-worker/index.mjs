@@ -21,7 +21,7 @@ const bookmakerID = numberEnv("BET9JA_BOOKMAKER_ID", 9478, 1);
 const apiKey = process.env.BET9JA_API_KEY || "";
 const limitID = numberEnv("BET9JA_LIMIT_ID", 1424, 1);
 const productType = process.env.BET9JA_PRODUCT_TYPE || "VFLM";
-const marketName = "1X2";
+const marketName = "Odd/even";
 const stakeScale = numberEnv("BET9JA_STAKE_SCALE", 10000, 1);
 const oddsScale = numberEnv("BET9JA_ODDS_SCALE", 10000, 1);
 
@@ -114,7 +114,7 @@ async function main() {
 }
 
 function taskBets(task) {
-  if (Array.isArray(task?.bets)) return task.bets;
+  if (Array.isArray(task?.bets)) return task.bets.slice(0, 1);
   if (task?.candidate) return [{ candidate: task.candidate, selection: task.selection }];
   return [];
 }
@@ -201,7 +201,7 @@ async function handleTask(task) {
     lastCandidate = candidate || lastCandidate;
     if (!candidate) continue;
     if (!bet?.selection) {
-      transientError = `No current live 1X2 selection was available for match ${candidate.match_id}.`;
+      transientError = `No current live Odd/even selection was available for match ${candidate.match_id}.`;
       await recordSkippedBet(candidate, transientError);
       continue;
     }
@@ -275,39 +275,36 @@ async function recordSkippedBet(candidate, reason, observedOdds) {
 
 async function placeCandidate(candidate, selection, credentials) {
   const decimalOdds = Number(selection.decimal_odds);
-  const betOutcome = String(candidate.bet_outcome || "").trim().toLowerCase();
-  const outcomeConfig = {
-    home: { id: "1", selectionID: "uof:6/sr:sport:1/1/1" },
-    away: { id: "2", selectionID: "uof:6/sr:sport:1/1/2" },
-  }[betOutcome];
-  if (Number(selection.market_id) !== 1 || selection.specifiers !== "" || !outcomeConfig || String(selection.outcome_id) !== outcomeConfig.id) {
-    throw new Error("The live selection did not match the requested 1X2 home or away outcome.");
+  const normalizedOutcomeName = String(selection.outcome_name || "").trim().toLowerCase();
+  const expectedOutcomeID = normalizedOutcomeName === "odd" ? "70" : normalizedOutcomeName === "even" ? "72" : "";
+  if (Number(selection.market_id) !== 26 || selection.specifiers !== "" || !expectedOutcomeID || String(selection.outcome_id) !== expectedOutcomeID) {
+    throw new Error("The live selection did not match a configured Odd/even outcome.");
   }
   if (!Number.isFinite(decimalOdds) || decimalOdds <= validBetOddsFloor) {
     return {
       action: "skip",
-      reason: "The live 1X2 selection did not contain valid odds greater than 1.00.",
+      reason: "The live Odd/even selection did not contain valid odds greater than 1.00.",
       observedOdds: Number.isFinite(decimalOdds) ? decimalOdds : undefined,
     };
   }
   if (selection.market_status !== undefined && Number(selection.market_status) !== 1) {
-    return { action: "skip", reason: "The 1X2 market is not currently active.", observedOdds: decimalOdds };
+    return { action: "skip", reason: "The Odd/even market is not currently active.", observedOdds: decimalOdds };
   }
   if (selection.outcome_active !== undefined && Number(selection.outcome_active) !== 1) {
-    return { action: "skip", reason: `The ${betOutcome} outcome is not currently active.`, observedOdds: decimalOdds };
+    return { action: "skip", reason: `The ${normalizedOutcomeName} outcome is not currently active.`, observedOdds: decimalOdds };
   }
   const observedAt = Date.parse(selection.observed_at || selection.source_timestamp_at || "");
   if (!Number.isFinite(observedAt) || Date.now() - observedAt > maxOddsAgeMs) {
-    throw new StaleOddsError(`Live 1X2 odds are stale or unavailable (maximum age ${Math.round(maxOddsAgeMs / 1000)} seconds).`);
+    throw new StaleOddsError(`Live Odd/even odds are stale or unavailable (maximum age ${Math.round(maxOddsAgeMs / 1000)} seconds).`);
   }
   const buildPayload = () => buildBetPayload(candidate, selection, {
     bookmakerID,
     sessionID: provider.sessionID,
     limitID,
-    selectionID: outcomeConfig.selectionID,
+    selectionID: `uof:6/sr:sport:1/26/${expectedOutcomeID}`,
     productType,
     marketName,
-    outcomeName: selection.outcome_name || betOutcome,
+    outcomeName: normalizedOutcomeName,
     stakeScale,
     oddsScale,
   });
