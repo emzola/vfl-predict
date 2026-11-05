@@ -21,7 +21,7 @@ const bookmakerID = numberEnv("BET9JA_BOOKMAKER_ID", 9478, 1);
 const apiKey = process.env.BET9JA_API_KEY || "";
 const limitID = numberEnv("BET9JA_LIMIT_ID", 1424, 1);
 const productType = process.env.BET9JA_PRODUCT_TYPE || "VFLM";
-const marketName = "Odd/even";
+const marketName = "Double Chance";
 const stakeScale = numberEnv("BET9JA_STAKE_SCALE", 10000, 1);
 const oddsScale = numberEnv("BET9JA_ODDS_SCALE", 10000, 1);
 
@@ -201,7 +201,7 @@ async function handleTask(task) {
     lastCandidate = candidate || lastCandidate;
     if (!candidate) continue;
     if (!bet?.selection) {
-      transientError = `No current live Odd/even selection was available for match ${candidate.match_id}.`;
+      transientError = `No current live Double Chance 12 selection was available for match ${candidate.match_id}.`;
       await recordSkippedBet(candidate, transientError);
       continue;
     }
@@ -275,27 +275,25 @@ async function recordSkippedBet(candidate, reason, observedOdds) {
 
 async function placeCandidate(candidate, selection, credentials) {
   const decimalOdds = Number(selection.decimal_odds);
-  const normalizedOutcomeName = String(selection.outcome_name || "").trim().toLowerCase();
-  const expectedOutcomeID = normalizedOutcomeName === "odd" ? "70" : normalizedOutcomeName === "even" ? "72" : "";
-  if (Number(selection.market_id) !== 26 || selection.specifiers !== "" || !expectedOutcomeID || String(selection.outcome_id) !== expectedOutcomeID) {
-    throw new Error("The live selection did not match a configured Odd/even outcome.");
+  if (Number(selection.market_id) !== 10 || selection.specifiers !== "" || String(selection.outcome_id) !== "10" || String(candidate.bet_outcome || "").trim() !== "12") {
+    throw new Error("The live selection did not match the configured Double Chance 12 outcome.");
   }
   if (!Number.isFinite(decimalOdds) || decimalOdds <= validBetOddsFloor) {
     return {
       action: "skip",
-      reason: "The live Odd/even selection did not contain valid odds greater than 1.00.",
+      reason: "The live Double Chance 12 selection did not contain valid odds greater than 1.00.",
       observedOdds: Number.isFinite(decimalOdds) ? decimalOdds : undefined,
     };
   }
   if (selection.market_status !== undefined && Number(selection.market_status) !== 1) {
-    return { action: "skip", reason: "The Odd/even market is not currently active.", observedOdds: decimalOdds };
+    return { action: "skip", reason: "The Double Chance market is not currently active.", observedOdds: decimalOdds };
   }
   if (selection.outcome_active !== undefined && Number(selection.outcome_active) !== 1) {
-    return { action: "skip", reason: `The ${normalizedOutcomeName} outcome is not currently active.`, observedOdds: decimalOdds };
+    return { action: "skip", reason: "The Double Chance 12 outcome is not currently active.", observedOdds: decimalOdds };
   }
   const observedAt = Date.parse(selection.observed_at || selection.source_timestamp_at || "");
   if (!Number.isFinite(observedAt) || Date.now() - observedAt > maxOddsAgeMs) {
-    throw new StaleOddsError(`Live Odd/even odds are stale or unavailable (maximum age ${Math.round(maxOddsAgeMs / 1000)} seconds).`);
+    throw new StaleOddsError(`Live Double Chance 12 odds are stale or unavailable (maximum age ${Math.round(maxOddsAgeMs / 1000)} seconds).`);
   }
   const buildPayload = () => buildBetPayload(candidate, selection, {
     bookmakerID,
@@ -303,7 +301,7 @@ async function placeCandidate(candidate, selection, credentials) {
     limitID,
     productType,
     marketName,
-    outcomeName: normalizedOutcomeName,
+    outcomeName: "12",
     stakeScale,
     oddsScale,
   });

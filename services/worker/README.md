@@ -34,12 +34,12 @@ so old provisional revisions cannot remain visible indefinitely.
 
 The separate Node auto-betting worker selects the single frozen match in the
 next eligible round with the highest normalized observed 1X2 home or away
-market probability strictly above 60%, then places one Odd/even bet. Outcomes
-repeat even, odd, odd, even. Every wager uses the configured base
-stake with flat staking. It waits for settlement before the next decision,
-accepts any valid active quote above 1.00, and settles the ledger from the
-final score parity. A season change does not reset the outcome cycle; turning
-auto betting off ends it and re-enabling auto betting starts fresh with even.
+market probability strictly above 60%, then places one Double Chance 12 bet.
+Recovery martingale sizing covers all previous losses, missed profits, and the
+current intended profit. It waits for settlement before the next decision,
+accepts any valid active quote above 1.00, and settles the ledger as won when
+the final score is not a draw. A season change does not reset recovery;
+turning auto betting off resets it.
 
 For one-off or controlled operations, `-freeze` remains available and forces
 the requested run to use the official frozen status. `-auto-freeze` is intended

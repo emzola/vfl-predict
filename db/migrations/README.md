@@ -90,9 +90,12 @@ home or away probability strictly above 60%, while preserving historical
 ledger rows.
 
 `023_phase7_odd_even_flat_staking.sql` restores the Odd/even market with the
-same observed 1X2 qualification and one-match-per-round selection. New bets
-use the repeating even, odd, odd, even cycle and the configured base stake;
-historical ledger rows remain unchanged.
+same observed 1X2 qualification and one-match-per-round selection. It is
+historical and is superseded by the current Double Chance strategy.
 
 `024_phase7_odd_even_four_step_cycle.sql` initializes the current four-step
-cycle at even without changing historical ledger rows.
+cycle at even without changing historical ledger rows. It is also historical.
+
+`025_phase7_double_chance_12_martingale.sql` makes Double Chance 12 the active
+market, restores recovery martingale staking, and starts a fresh recovery cycle
+while preserving season-spanning recovery and one active decision per round.

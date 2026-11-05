@@ -108,7 +108,7 @@ export default function AutoBettingPage() {
       <PageHeading
         eyebrow="Auto betting"
         title="Automated staking"
-        description="Auto betting selects the single frozen match with the highest observed normalized 1X2 home or away market probability above 60% and places one Odd/even bet. Outcomes repeat even, odd, odd, even, using flat staking at the configured base stake."
+        description="Auto betting selects the single frozen match with the highest observed normalized 1X2 home or away market probability above 60% and places one Double Chance 12 bet. Recovery martingale staking covers prior losses, missed profits, and the current intended profit across seasons."
         action={<StatusPill status={data.runtime.state || (data.settings.enabled ? "idle" : "disabled")} />}
       />
       {error && <div className="mb-5"><ErrorState message={error} /></div>}
@@ -117,7 +117,7 @@ export default function AutoBettingPage() {
         <MetricCard label="Auto betting" value={data.settings.enabled ? "Enabled" : "Disabled"} detail={"Updated " + formatDate(data.settings.updated_at)} tone={data.settings.enabled ? "good" : "warn"} />
         <MetricCard label="Base stake" value={naira(data.settings.base_stake)} detail="Base unit for the intended profit target" />
         <MetricCard label="Season profit" value={naira(summary?.total_profit || 0)} detail={summary?.season_id ? "Season " + summary.season_id : "No active season"} tone={summary?.total_profit && summary.total_profit > 0 ? "good" : "default"} />
-        <MetricCard label="Next stake" value={naira(summary?.next_stake || data.settings.base_stake)} detail="Configured flat stake for every wager" tone={summary?.paused ? "warn" : "default"} />
+        <MetricCard label="Next stake" value={naira(summary?.next_stake || data.settings.base_stake)} detail="Recovery stake for the current Double Chance 12 quote" tone={summary?.paused ? "warn" : "default"} />
       </section>
 
       <section className="mt-6 grid gap-6 xl:grid-cols-[0.9fr_1.1fr]">
@@ -128,7 +128,7 @@ export default function AutoBettingPage() {
               <input type="checkbox" checked={enabled} onChange={(event) => setEnabled(event.target.checked)} className="mt-1 h-4 w-4 rounded border-slate-700 bg-slate-950 text-accent" />
               <span>
                 <span className="block font-medium text-white">Enable auto betting</span>
-                <span className="mt-1 block text-sm leading-6 text-slate-400">The worker places exactly one Odd/even bet on the highest observed normalized 1X2 home or away market probability above 60% in each round. Outcomes repeat even, odd, odd, even. It waits for settlement before the next decision; turning auto betting off ends the cycle, and re-enabling it starts fresh with even.</span>
+                <span className="mt-1 block text-sm leading-6 text-slate-400">The worker places exactly one Double Chance 12 bet on the highest observed normalized 1X2 home or away market probability above 60% in each round. It waits for settlement before the next decision. Recovery martingale sizing carries across seasons; turning auto betting off resets the recovery cycle.</span>
               </span>
             </label>
 
@@ -154,13 +154,13 @@ export default function AutoBettingPage() {
                 onChange={(event) => setProfitTarget(Number(event.target.value))}
                 className="mt-2 w-full rounded-lg border border-slate-700 bg-slate-950/40 px-3 py-2 text-white"
               />
-              <span className="mt-1 block text-xs text-slate-500">Betting pauses for the current season when this net profit is reached and resumes with the next season.</span>
+              <span className="mt-1 block text-xs text-slate-500">Betting pauses for the current season when this net profit is reached and resumes with the next season; the recovery balance carries across seasons.</span>
             </label>
 
             <div className="grid gap-3 sm:grid-cols-2">
               <div className="rounded-xl border border-slate-800 bg-slate-950/20 p-4 text-sm">
                 <p className="text-slate-500">Fixed market</p>
-                <p className="mt-1 font-semibold text-white">Odd/even — even, odd, odd, even</p>
+                <p className="mt-1 font-semibold text-white">Double Chance — 12</p>
               </div>
               <div className="rounded-xl border border-slate-800 bg-slate-950/20 p-4 text-sm">
                 <p className="text-slate-500">Odds requirement</p>
@@ -172,7 +172,7 @@ export default function AutoBettingPage() {
               </div>
               <div className="rounded-xl border border-slate-800 bg-slate-950/20 p-4 text-sm">
                 <p className="text-slate-500">Staking model</p>
-                <p className="mt-1 font-semibold text-white">Flat staking</p>
+                <p className="mt-1 font-semibold text-white">Recovery martingale</p>
               </div>
             </div>
 
@@ -252,6 +252,9 @@ export default function AutoBettingPage() {
               <div><p className="text-slate-500">Total staked</p><p className="mt-1 font-semibold text-white">{naira(summary?.total_staked || 0)}</p></div>
               <div><p className="text-slate-500">Total returned</p><p className="mt-1 font-semibold text-white">{naira(summary?.total_returned || 0)}</p></div>
               <div><p className="text-slate-500">Season profit</p><p className="mt-1 font-semibold text-white">{naira(summary?.total_profit || 0)}</p></div>
+              <div><p className="text-slate-500">Unrecovered loss</p><p className="mt-1 font-semibold text-white">{naira(summary?.unrecovered_loss || 0)}</p></div>
+              <div><p className="text-slate-500">Missed profit</p><p className="mt-1 font-semibold text-white">{naira(summary?.missed_profit || 0)}</p></div>
+              <div><p className="text-slate-500">Recovery obligation</p><p className="mt-1 font-semibold text-white">{naira(summary?.recovery_obligation || 0)}</p></div>
               <div><p className="text-slate-500">Wins / losses</p><p className="mt-1">{summary?.bets_won || 0} / {summary?.bets_lost || 0}</p></div>
               <div><p className="text-slate-500">Skipped / pending</p><p className="mt-1">{summary?.bets_skipped || 0} / {summary?.pending_settlements || 0}</p></div>
             </div>
@@ -261,7 +264,7 @@ export default function AutoBettingPage() {
 
       <section className="panel mt-6 p-6">
         <p className="eyebrow">Next ranked bet</p>
-        {candidates.length === 0 ? <p className="mt-4 text-sm text-slate-400">No qualifying observed 1X2 market probability is currently ready. The worker may be waiting for settlement, a complete frozen round, a new season after a profit-target pause, or valid live Odd/even market data.</p> : (
+        {candidates.length === 0 ? <p className="mt-4 text-sm text-slate-400">No qualifying observed 1X2 market probability is currently ready. The worker may be waiting for settlement, a complete frozen round, a new season after a profit-target pause, or valid live Double Chance 12 market data.</p> : (
           <div className="mt-4 space-y-4">
             {candidates.map((candidate) => (
               <div key={candidate.match_id} className="rounded-xl border border-slate-800 bg-slate-950/20 p-4">
@@ -278,7 +281,7 @@ export default function AutoBettingPage() {
                 </div>
                 <div className="mt-5 grid gap-3 text-sm text-slate-300 sm:grid-cols-2 lg:grid-cols-5">
                   <div><p className="text-slate-500">Round</p><p className="mt-1">Season {candidate.season_id} · Round {candidate.round}</p></div>
-                  <div><p className="text-slate-500">Bet</p><p className="mt-1 font-semibold capitalize text-white">Odd/even — {candidate.bet_outcome || "—"}</p></div>
+                  <div><p className="text-slate-500">Bet</p><p className="mt-1 font-semibold capitalize text-white">Double Chance — {candidate.bet_outcome || "12"}</p></div>
                   <div><p className="text-slate-500">Observed 1X2</p><p className="mt-1 font-semibold capitalize text-white">{candidate.decision_outcome} · {percentage(candidate.market_probability)}</p></div>
                   <div><p className="text-slate-500">Stake</p><p className="mt-1 font-semibold text-white">{naira(candidate.stake_amount)}</p></div>
                   <div><p className="text-slate-500">Odds requirement</p><p className="mt-1 font-semibold text-white">Above 1.00</p></div>
@@ -304,7 +307,7 @@ export default function AutoBettingPage() {
                 </div>
                 <div className="mt-4 grid gap-3 text-sm text-slate-300 sm:grid-cols-2 lg:grid-cols-6">
                   <div><p className="text-slate-500">Stake</p><p className="mt-1">{naira(item.stake_amount)}</p></div>
-                  <div><p className="text-slate-500">Bet</p><p className="mt-1">{item.market_key === "odd_even" ? "Odd/even — " + (item.bet_outcome || "—") : item.bet_outcome || "—"}</p></div>
+                  <div><p className="text-slate-500">Bet</p><p className="mt-1">{item.market_key === "double_chance_12" ? "Double Chance — " + (item.bet_outcome || "12") : item.bet_outcome || "—"}</p></div>
                   <div><p className="text-slate-500">Observed 1X2</p><p className="mt-1">{typeof item.market_probability === "number" ? percentage(item.market_probability) : "—"}</p></div>
                   <div><p className="text-slate-500">Quoted odds</p><p className="mt-1">{typeof item.quoted_odds === "number" ? item.quoted_odds.toFixed(2) : "—"}</p></div>
                   <div><p className="text-slate-500">Return</p><p className="mt-1">{naira(item.realized_return ?? item.potential_return)}</p></div>
