@@ -94,6 +94,17 @@ test("buildBetPayload rejects a non Odd/even market selection", () => {
   );
 });
 
+test("buildBetPayload rejects the Even outcome under the Odd-only strategy", () => {
+  assert.throws(
+    () => buildBetPayload(
+      { ...candidate, bet_outcome: "even" },
+      { ...selection, outcome_id: "72", outcome_name: "even" },
+      { sessionID: "session-1" },
+    ),
+    /valid Odd\/even market outcome/,
+  );
+});
+
 test("Bet9jaApiClient uses the getGames session ID and matches ticket request headers", async () => {
   const requests = [];
   const fetchImpl = async (url, init = {}) => {

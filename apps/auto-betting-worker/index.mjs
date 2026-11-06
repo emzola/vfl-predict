@@ -276,9 +276,9 @@ async function recordSkippedBet(candidate, reason, observedOdds) {
 async function placeCandidate(candidate, selection, credentials) {
   const decimalOdds = Number(selection.decimal_odds);
   const normalizedOutcomeName = String(candidate.bet_outcome || "").trim().toLowerCase();
-  const expectedOutcomeID = normalizedOutcomeName === "odd" ? "70" : normalizedOutcomeName === "even" ? "72" : "";
-  if (Number(selection.market_id) !== 26 || selection.specifiers !== "" || !expectedOutcomeID || String(selection.outcome_id) !== expectedOutcomeID || String(selection.outcome_name || "").trim().toLowerCase() !== normalizedOutcomeName) {
-    throw new Error("The live selection did not match the configured Odd/even outcome.");
+  const expectedOutcomeID = normalizedOutcomeName === "odd" ? "70" : "";
+  if (normalizedOutcomeName !== "odd" || Number(selection.market_id) !== 26 || selection.specifiers !== "" || String(selection.outcome_id) !== expectedOutcomeID || String(selection.outcome_name || "").trim().toLowerCase() !== normalizedOutcomeName) {
+    throw new Error("The live selection did not match the configured Odd outcome.");
   }
   if (!Number.isFinite(decimalOdds) || decimalOdds <= validBetOddsFloor) {
     return {

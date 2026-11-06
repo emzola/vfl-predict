@@ -114,7 +114,7 @@ export default function AutoBettingPage() {
       <PageHeading
         eyebrow="Auto betting"
         title="Automated staking"
-        description="Auto betting selects the #1 ranked frozen prediction and places one Odd/even bet using the repeating odd, even, odd, even, even, odd, even, even, odd, odd cycle. Recovery martingale staking covers prior losses, missed profits, and the current intended profit across market and season changes."
+        description="Auto betting selects the #1 ranked frozen prediction and places one bet on the Odd outcome in the Odd/even market. Recovery martingale staking covers prior losses, missed profits, and the current intended profit across market and season changes."
         action={<StatusPill status={data.runtime.state || (data.settings.enabled ? "idle" : "disabled")} />}
       />
       {error && <div className="mb-5"><ErrorState message={error} /></div>}
@@ -134,7 +134,7 @@ export default function AutoBettingPage() {
               <input type="checkbox" checked={enabled} onChange={(event) => setEnabled(event.target.checked)} className="mt-1 h-4 w-4 rounded border-slate-700 bg-slate-950 text-accent" />
               <span>
                 <span className="block font-medium text-white">Enable auto betting</span>
-                <span className="mt-1 block text-sm leading-6 text-slate-400">The worker places exactly one Odd/even bet on the #1 ranked frozen prediction in each round. Positive verified Over 2.5-versus-market differences receive ranking priority, with model probability ranking the remaining predictions. Outcomes repeat odd, even, odd, even, even, odd, even, even, odd, odd. It waits for settlement before the next decision. Recovery martingale sizing carries across market and season changes; turning auto betting off resets the recovery cycle.</span>
+                <span className="mt-1 block text-sm leading-6 text-slate-400">The worker places exactly one bet on the Odd outcome in the Odd/even market for the #1 ranked frozen prediction in each round. Positive verified Over 2.5-versus-market differences receive ranking priority, with model probability ranking the remaining predictions. It waits for settlement before the next decision. Recovery martingale sizing carries across market and season changes; turning auto betting off resets the recovery cycle.</span>
               </span>
             </label>
 
@@ -166,7 +166,7 @@ export default function AutoBettingPage() {
             <div className="grid gap-3 sm:grid-cols-2">
               <div className="rounded-xl border border-slate-800 bg-slate-950/20 p-4 text-sm">
                 <p className="text-slate-500">Fixed market</p>
-                <p className="mt-1 font-semibold text-white">Odd/even — odd, even, odd, even, even, odd, even, even, odd, odd</p>
+                <p className="mt-1 font-semibold text-white">Odd/even — odd only</p>
               </div>
               <div className="rounded-xl border border-slate-800 bg-slate-950/20 p-4 text-sm">
                 <p className="text-slate-500">Odds requirement</p>

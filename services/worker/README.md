@@ -35,8 +35,8 @@ so old provisional revisions cannot remain visible indefinitely.
 
 The separate Node auto-betting worker selects the #1 frozen prediction in the
 next eligible round using the same decision ranking shown in the prediction
-dashboard, then places one Odd/even bet using the repeating cycle odd, even,
-odd, even, even, odd, even, even, odd, odd. Recovery martingale sizing covers all previous losses,
+dashboard, then places one bet on the Odd outcome in the Odd/even market.
+Recovery martingale sizing covers all previous losses,
 missed profits, and the current intended profit. It waits for settlement before
 the next decision, accepts any valid active quote above 1.00, and settles the
 ledger from the final score parity. Market and season changes do not reset

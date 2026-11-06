@@ -22,7 +22,6 @@ const (
 	stakingStrategy   = "martingale_recovery"
 	oddEvenMarketID   = int64(26)
 	oddOutcomeID      = "70"
-	evenOutcomeID     = "72"
 	oddEvenSpecifiers = ""
 )
 
@@ -32,18 +31,7 @@ type betOutcome struct {
 	Position int
 }
 
-var oddEvenBetCycle = [...]betOutcome{
-	{ID: oddOutcomeID, Name: "odd", Position: 1},
-	{ID: evenOutcomeID, Name: "even", Position: 2},
-	{ID: oddOutcomeID, Name: "odd", Position: 3},
-	{ID: evenOutcomeID, Name: "even", Position: 4},
-	{ID: evenOutcomeID, Name: "even", Position: 5},
-	{ID: oddOutcomeID, Name: "odd", Position: 6},
-	{ID: evenOutcomeID, Name: "even", Position: 7},
-	{ID: evenOutcomeID, Name: "even", Position: 8},
-	{ID: oddOutcomeID, Name: "odd", Position: 9},
-	{ID: oddOutcomeID, Name: "odd", Position: 10},
-}
+var oddEvenBetOutcome = betOutcome{ID: oddOutcomeID, Name: "odd", Position: 1}
 
 type Service struct {
 	DB             *sql.DB
@@ -623,8 +611,8 @@ func (s *Service) loadBetSelection(ctx context.Context, matchID int64, outcomeID
 	if matchID <= 0 {
 		return nil, errors.New("invalid betting match id")
 	}
-	if outcomeID != oddOutcomeID && outcomeID != evenOutcomeID {
-		return nil, errors.New("invalid Odd/even outcome")
+	if outcomeID != oddOutcomeID {
+		return nil, errors.New("only the Odd outcome is allowed")
 	}
 	var selection BetSelection
 	err := s.DB.QueryRowContext(ctx, `
@@ -672,22 +660,7 @@ LIMIT 1`, matchID, oddEvenMarketID, oddEvenSpecifiers, outcomeID).Scan(
 }
 
 func (s *Service) nextBetOutcome(ctx context.Context, resetAt time.Time) (betOutcome, error) {
-	if resetAt.IsZero() {
-		resetAt = time.Unix(0, 0).UTC()
-	}
-	var placedCount int64
-	err := s.DB.QueryRowContext(ctx, `
-SELECT count(*)
-FROM auto_betting_rounds
-WHERE created_at >= $1
-  AND market_key = $2
-  AND status IN ('placed', 'won', 'lost', 'void')
-  AND decision_payload ? 'bet_outcome'`, resetAt, marketKey).Scan(&placedCount)
-	if err != nil {
-		return betOutcome{}, err
-	}
-	position := int(placedCount % int64(len(oddEvenBetCycle)))
-	return oddEvenBetCycle[position], nil
+	return oddEvenBetOutcome, nil
 }
 
 func (s *Service) UpdateRuntime(ctx context.Context, update RuntimeUpdate) error {

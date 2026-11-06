@@ -10,7 +10,6 @@ const VALID_ODDS_FLOOR = 1.00;
 const ODD_EVEN_MARKET_ID = 26;
 const ODD_EVEN_OUTCOMES = Object.freeze({
   odd: Object.freeze({ id: "70", selectionID: "uof:6/sr:sport:1/26/70" }),
-  even: Object.freeze({ id: "72", selectionID: "uof:6/sr:sport:1/26/72" }),
 });
 
 export class Bet9jaError extends Error {

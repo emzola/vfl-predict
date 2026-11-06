@@ -193,12 +193,10 @@ func TestOver15SettlementDecisionWaitsForFinalScore(t *testing.T) {
 	}
 }
 
-func TestOddEvenBetCycleRepeats(t *testing.T) {
-	want := []string{"odd", "even", "odd", "even", "even", "odd", "even", "even", "odd", "odd"}
-	for index := 0; index < len(want)*2; index++ {
-		got := oddEvenBetCycle[index%len(oddEvenBetCycle)].Name
-		if got != want[index%len(want)] {
-			t.Fatalf("cycle position %d=%q want %q", index, got, want[index%len(want)])
+func TestOddEvenBetOutcomeIsAlwaysOdd(t *testing.T) {
+	for index := 0; index < 20; index++ {
+		if oddEvenBetOutcome.Name != "odd" || oddEvenBetOutcome.ID != oddOutcomeID || oddEvenBetOutcome.Position != 1 {
+			t.Fatalf("outcome at position %d=%+v want odd outcome", index, oddEvenBetOutcome)
 		}
 	}
 }

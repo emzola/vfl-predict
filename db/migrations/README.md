@@ -112,4 +112,8 @@ the recovery balance or changing historical ledger rows.
 
 `028_phase7_odd_even_ten_step_cycle.sql` changes new Odd/even bets to the
 repeating odd, even, odd, even, even, odd, even, even, odd, odd cycle without
-resetting the recovery balance or changing historical ledger rows.
+resetting the recovery balance or changing historical ledger rows. It is
+superseded by the fixed Odd-outcome migration below.
+
+`029_phase7_odd_even_odd_only.sql` changes new Odd/even bets to the Odd outcome
+only without resetting the recovery balance or changing historical ledger rows.
