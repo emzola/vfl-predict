@@ -37,10 +37,12 @@ var oddEvenBetCycle = [...]betOutcome{
 	{ID: evenOutcomeID, Name: "even", Position: 2},
 	{ID: oddOutcomeID, Name: "odd", Position: 3},
 	{ID: evenOutcomeID, Name: "even", Position: 4},
-	{ID: oddOutcomeID, Name: "odd", Position: 5},
+	{ID: evenOutcomeID, Name: "even", Position: 5},
 	{ID: oddOutcomeID, Name: "odd", Position: 6},
 	{ID: evenOutcomeID, Name: "even", Position: 7},
 	{ID: evenOutcomeID, Name: "even", Position: 8},
+	{ID: oddOutcomeID, Name: "odd", Position: 9},
+	{ID: oddOutcomeID, Name: "odd", Position: 10},
 }
 
 type Service struct {

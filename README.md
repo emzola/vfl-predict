@@ -152,8 +152,8 @@ round, ranks the predictions using the same decision ranking shown in the
 dashboard, and selects only the #1 prediction. Positive verified Dynamic
 Bayesian Over 2.5-versus-market differences receive priority; the model
 probability ranks the remaining predictions. It then places one Odd/even bet
-for that round using the repeating outcome cycle odd, even, odd, even, odd,
-odd, even, even. Use `-model bookmaker_first` to explicitly make bookmaker probabilities
+for that round using the repeating outcome cycle odd, even, odd, even, even,
+odd, even, even, odd, odd. Use `-model bookmaker_first` to explicitly make bookmaker probabilities
 the primary 1X2 prediction, or `-model poisson` to run the statistical fallback
 policy directly. Recovery martingale staking sizes each winning recovery bet
 to cover all previous losses, missed profits, and the current intended profit.

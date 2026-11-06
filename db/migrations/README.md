@@ -109,3 +109,7 @@ existing cutoff across market and season changes.
 `027_phase7_odd_even_eight_step_cycle.sql` changes new Odd/even bets to the
 repeating odd, even, odd, even, odd, odd, even, even cycle without resetting
 the recovery balance or changing historical ledger rows.
+
+`028_phase7_odd_even_ten_step_cycle.sql` changes new Odd/even bets to the
+repeating odd, even, odd, even, even, odd, even, even, odd, odd cycle without
+resetting the recovery balance or changing historical ledger rows.

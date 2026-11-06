@@ -194,7 +194,7 @@ func TestOver15SettlementDecisionWaitsForFinalScore(t *testing.T) {
 }
 
 func TestOddEvenBetCycleRepeats(t *testing.T) {
-	want := []string{"odd", "even", "odd", "even", "odd", "odd", "even", "even"}
+	want := []string{"odd", "even", "odd", "even", "even", "odd", "even", "even", "odd", "odd"}
 	for index := 0; index < len(want)*2; index++ {
 		got := oddEvenBetCycle[index%len(oddEvenBetCycle)].Name
 		if got != want[index%len(want)] {
