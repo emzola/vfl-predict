@@ -8,8 +8,9 @@ Phase 3 provides independent worker commands:
   generation using the production `dynamic_bayesian_team_strength` policy:
   current-season model probabilities are stored with verified pre-cutoff
   bookmaker markets; auto-betting selects the #1 frozen prediction in each
-  round using the positive Dynamic Bayesian Over 2.5-versus-bookmaker Over 2.5
-  difference, with model probability as the fallback.
+  round using the same decision ranking shown in the prediction dashboard.
+  Positive Dynamic Bayesian Over 2.5-versus-bookmaker Over 2.5 differences
+  receive priority, with model probability as the fallback.
 - `cmd/forward-settle` settles frozen predictions and records forward paper
   metrics.
 
@@ -32,14 +33,14 @@ eligible round. The dashboard's Future Rounds endpoint also excludes rounds
 whose kickoff has passed and rounds that already have a complete official run,
 so old provisional revisions cannot remain visible indefinitely.
 
-The separate Node auto-betting worker selects the single frozen match in the
-next eligible round with the highest normalized observed 1X2 home or away
-market probability strictly above 60%, then places one Double Chance 12 bet.
-Recovery martingale sizing covers all previous losses, missed profits, and the
-current intended profit. It waits for settlement before the next decision,
-accepts any valid active quote above 1.00, and settles the ledger as won when
-the final score is not a draw. A season change does not reset recovery;
-turning auto betting off resets it.
+The separate Node auto-betting worker selects the #1 frozen prediction in the
+next eligible round using the same decision ranking shown in the prediction
+dashboard, then places one Odd/even bet using the repeating cycle odd, even,
+odd, even, odd, odd, even, even. Recovery martingale sizing covers all previous losses,
+missed profits, and the current intended profit. It waits for settlement before
+the next decision, accepts any valid active quote above 1.00, and settles the
+ledger from the final score parity. Market and season changes do not reset
+recovery; turning auto betting off resets it.
 
 For one-off or controlled operations, `-freeze` remains available and forces
 the requested run to use the official frozen status. `-auto-freeze` is intended

@@ -91,11 +91,21 @@ ledger rows.
 
 `023_phase7_odd_even_flat_staking.sql` restores the Odd/even market with the
 same observed 1X2 qualification and one-match-per-round selection. It is
-historical and is superseded by the current Double Chance strategy.
+historical and is superseded by the later recovery-strategy migrations.
 
 `024_phase7_odd_even_four_step_cycle.sql` initializes the current four-step
 cycle at even without changing historical ledger rows. It is also historical.
 
 `025_phase7_double_chance_12_martingale.sql` makes Double Chance 12 the active
 market, restores recovery martingale staking, and starts a fresh recovery cycle
-while preserving season-spanning recovery and one active decision per round.
+while preserving season-spanning recovery and one active decision per round. It
+is superseded by the current Odd/even strategy.
+
+`026_phase7_odd_even_six_step_cycle.sql` restores the Odd/even market with the
+#1 prediction ranking and one-match-per-round selection. It is superseded by
+the eight-step cycle migration below; martingale recovery continues from the
+existing cutoff across market and season changes.
+
+`027_phase7_odd_even_eight_step_cycle.sql` changes new Odd/even bets to the
+repeating odd, even, odd, even, odd, odd, even, even cycle without resetting
+the recovery balance or changing historical ledger rows.

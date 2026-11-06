@@ -251,7 +251,7 @@ export type AutoBettingCandidate = {
   decision_outcome: string;
   decision_probability: number;
   decision_market_difference?: number;
-  market_probability: number;
+  market_probability?: number;
   point_in_time_verified: boolean;
   odds_observed_at?: string;
   bet_outcome?: string;
@@ -269,6 +269,8 @@ export type AutoBettingRoundRecord = {
   stake_amount: number;
   market_key?: string;
   bet_outcome?: string;
+  decision_basis?: string;
+  decision_probability?: number;
   market_probability?: number;
   quoted_odds?: number;
   potential_return?: number;
